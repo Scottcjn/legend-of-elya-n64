@@ -1,162 +1,168 @@
-# 🏰 Legend of Elya — Nintendo 64 LLM Game
+# 🏰 Legend of Elya — World's First N64 LLM Game
 
-> **World's First LLM-powered Nintendo 64 Game**
-> A nano-GPT language model trained on Sophia Elya's dialogue, running entirely on a 93 MHz VR4300 MIPS CPU — no cloud, no cheating. Real 1996 silicon, real neural inference.
+> **A nano-GPT language model running entirely on a 93 MHz VR4300 MIPS CPU.**
+> No cloud. No cheating. Real 1996 silicon, real neural inference.
 
-![Legend of Elya running in ares emulator](screenshot.png)
+[![Platform](https://img.shields.io/badge/platform-Nintendo%2064-red)](https://en.wikipedia.org/wiki/Nintendo_64)
+[![Architecture](https://img.shields.io/badge/CPU-VR4300%20MIPS%20III-blue)](https://en.wikipedia.org/wiki/NEC_VR4300)
+[![Model](https://img.shields.io/badge/model-SEAI%20nano--GPT-green)](nano_gpt.h)
+[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
-## What Is This?
+---
 
-Legend of Elya is an N64 homebrew game where you explore a dungeon and talk to **Sophia Elya**, an NPC powered by a genuine on-cart LLM. Press A near her, and she generates a unique response in real time, token by token, using a Q4-quantized character-level transformer trained on her utterances.
+## What is This?
 
-The model runs 100% on the N64 CPU. No server calls. No Wi-Fi. Just 8 MB of RDRAM and a 93 MHz MIPS chip doing matrix math.
+Legend of Elya is an original N64 homebrew game featuring **Sophia Elya** — a character-level LLM (nano-GPT) running live on-cart on the Nintendo 64's VR4300 CPU. Sophia generates responses in real-time, constrained to printable ASCII, with no floating-point (the N64's FPU lacks `trunc.w.s`) — everything runs in **Q8.7 fixed-point arithmetic**.
+
+This is believed to be the first neural language model to run live inference on N64 hardware.
+
+---
 
 ## Architecture
 
+### Hardware
+| Component | Spec |
+|-----------|------|
+| CPU | NEC VR4300 @ 93.75 MHz (MIPS III) |
+| RAM | 4 MB RDRAM (8 MB with Expansion Pak) |
+| Instruction Set | MIPS III, 64-bit, big-endian |
+| FP Policy | Avoided — Q8.7 fixed-point only |
+
+### Model (SEAI Format)
+| Parameter | Value |
+|-----------|-------|
+| Layers | 2 transformer blocks |
+| Embedding dim | 128 |
+| Attention heads | 4 (32-dim each) |
+| FFN hidden dim | 512 (4× embed) |
+| Vocabulary | 256 (byte-level) |
+| Context window | 32 tokens |
+| Quantization | Q4 (2 nibbles/byte) + float16 scales per 32-block |
+| Weight file size | 237,580 bytes (~232 KB) |
+| Parameters | ~427,264 |
+
+### SEAI Binary Format
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   Nintendo 64 ROM                        │
-│                                                          │
-│  ┌─────────────────┐    ┌──────────────────────────┐    │
-│  │  legend_of_elya │    │       nano_gpt.c          │    │
-│  │      .c         │───▶│                          │    │
-│  │                 │    │  ┌──────────────────────┐ │    │
-│  │  Game loop      │    │  │  Q4 Transformer      │ │    │
-│  │  Dungeon render │    │  │  • 4 attn layers     │ │    │
-│  │  Dialog UI      │    │  │  • 64-dim embeddings │ │    │
-│  │  Input handler  │    │  │  • 256 vocab (bytes) │ │    │
-│  └─────────────────┘    │  │  • Q4_0 quant        │ │    │
-│                         │  └──────────────────────┘ │    │
-│                         │   Runs on VR4300 @ 93MHz  │    │
-│                         └──────────────────────────┘    │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │  DragonFS (DFS) — ROM filesystem                 │    │
-│  │  └─ sophia_weights.bin  (~257 KB, Q4 quantized) │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
+Offset  Size    Description
+0x0000  4       Magic: 0x49414553 ("SEAI" LE)
+0x0004  1       n_layers (2)
+0x0005  2       n_embed (128)
+0x0007  1       n_heads (4)
+0x0008  2       vocab_size (256)
+0x000A  1       ctx_len (32)
+0x000B  1       padding
+0x000C  16384   Embedding table: vocab×embed Q4 packed (global scale, no per-block scales)
+0x400C  110592  Layer 0: [wq|wk|wv|wo|wff1|wff2 Q4 data] then [sq|sk|sv|so|sff1|sff2 float16 scales]
+0x1B40C 110592  Layer 1: same layout
+Total:  237,580 bytes
 ```
+
+### Q4 Quantization
+```c
+// Encoding (training time, Python):
+// wq = round(w / max_abs * 7), clipped to [-8, 7]
+// packed[i] = (wq[2i] + 8) | ((wq[2i+1] + 8) << 4)
+
+// Decoding (inference time, C):
+uint8_t byte = weights[idx >> 1];
+int nibble = (idx & 1) ? (byte >> 4) : (byte & 0xF);
+int16_t val = (int16_t)((nibble - 8) * FP_ONE / 8);  // → Q8.7
+```
+
+### Fixed-Point Arithmetic
+All activations use **Q8.7**: `int16_t` where `128 = 1.0`.
+- Multiply: `(a * b) >> 7`
+- Layer norm, softmax: integer approximations
+- No `float` or `double` anywhere in the inference path
+
+---
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `legend_of_elya.c` | Game engine — dungeon rendering, dialog box, input, main loop |
-| `nano_gpt.c` | LLM inference engine — Q4 transformer forward pass |
-| `nano_gpt.h` | API and data structures |
+| `legend_of_elya.c` | Main game: N64 display, dialog, Sophia integration |
+| `nano_gpt.c` | Core inference engine (Q8.7 fixed-point, N64 MIPS) |
+| `nano_gpt.h` | SEAI struct definitions, SGAIState, SGAILayer |
+| `nano_gpt_host.c` | x86 host port for testing (same logic, uses `memalign`) |
+| `gen_sophia_host.c` | Host-side generation CLI: pipe prompt, get response |
+| `train_sophia.py` | PyTorch training script → exports SEAI binary |
 | `Makefile` | libdragon build system |
-| `filesystem/sophia_weights.bin` | Trained model weights *(not in repo — generate with training scripts)* |
-
-## How It Works
-
-### The Model
-- **Architecture**: Character-level GPT (byte-level vocabulary, 256 tokens)
-- **Size**: ~257 KB Q4-quantized weights
-- **Layers**: 4 transformer layers × 4 attention heads × 64-dim embeddings
-- **Training data**: Sophia Elya character dialogue utterances
-- **Quantization**: Q4_0 — 32 values per block, 1 float32 scale per block
-
-### The VR4300 FPU Problem
-The N64's R4300 CPU has an FPU that **does not implement** `trunc.w.s` (float-to-integer truncation). GCC emits this instruction for any `(int)float` cast. Hit it and the game crashes with:
-
-```
-Generic floating point exception
-FPU status: 01800E04 [NOTIMPL]
-Instruction: trunc.w.s $f0, $f0
-```
-
-**Fix**: Compile `nano_gpt.c` with `-msoft-float`. This replaces every FP instruction with MIPS-I software library calls. Linker will warn about mixed hard/soft float — this is harmless since the nano_gpt API uses only integers externally.
-
-```makefile
-# Makefile — per-file soft-float rule
-$(BUILD_DIR)/nano_gpt.o: nano_gpt.c
-	$(CC) $(N64_CFLAGS) -msoft-float -c $< -o $@
-```
-
-### Rendering — Zero Flicker
-Early versions used `console_render()` which internally calls `display_get()` + `display_show()` on a new framebuffer, alternating with the RDP framebuffer at 60 fps → 30 fps text flicker.
-
-**Fix**: Single-buffer rendering —
-```c
-surface_t *disp = display_get();       // ONE buffer
-rdpq_attach(disp, NULL);               // RDP draws graphics into it
-// ... rdpq fill calls ...
-rdpq_detach_wait();                    // Flush RDP coprocessor
-draw_text(disp);                       // CPU writes text into same surface
-display_show(disp);                    // Show once — no flicker
-```
-
-## Building
-
-### Requirements
-- [libdragon](https://github.com/DragonMinded/libdragon) toolchain (`N64_INST` set)
-- `mips64-elf-gcc` with MIPS-I soft-float support
-- `mkdfs` (included with libdragon)
-
-### Steps
-
-```bash
-# 1. Clone and enter
-git clone https://github.com/sophiaeagent-beep/n64llm-legend-of-Elya
-cd n64llm-legend-of-Elya
-
-# 2. Add weights (train your own or use the sophia weights)
-mkdir -p filesystem
-cp /path/to/sophia_weights.bin filesystem/
-
-# 3. Build
-make
-
-# 4. Run in ares (best emulator for libdragon)
-# Copy ROM to your home dir (ares flatpak sandbox restriction)
-cp legend_of_elya.z64 ~/
-flatpak run dev.ares.ares ~/legend_of_elya.z64
-```
-
-### Ares Settings (required)
-In Settings → Nintendo 64:
-- **Homebrew Mode**: ✅ On
-- **Expansion Pak**: ✅ On
-
-## Gameplay
-
-| Screen | What to Do |
-|--------|-----------|
-| **Title** | Press **Start** or **A** to enter the dungeon |
-| **Dungeon** | Press **A** to talk to Sophia Elya |
-| **Dialog** | Watch the LLM generate her response token by token |
-| **Dialog done** | Press **A** to ask again, **B** to close |
-
-## Known Issues
-
-- **Slow generation**: ~2–10 seconds per token on real N64 hardware. This is correct — the VR4300 is running a neural network with no hardware acceleration.
-- **Garbled first build**: If weights aren't loaded, canned responses are used. If you see `?` characters, the model output bytes are being clamped to printable ASCII range (32–126). Rebuild from the training pipeline for clean output.
-- **3D models**: This version uses pixel-art sprites. A Pyrite64-based version with the actual Meshy GLB models (sophia_elya.glb, stalfos.glb, dungeon_map_n64.glb) is in development.
-
-## Training Your Own Weights
-
-```python
-# (Python training pipeline — separate repo)
-# Trains a byte-level character GPT on dialogue data
-# and exports to the sophia_weights.bin binary format
-
-python train_sophia.py \
-    --data sophia_utterances.txt \
-    --n_embd 64 \
-    --n_head 4 \
-    --n_layer 4 \
-    --ctx_len 128 \
-    --export filesystem/sophia_weights.bin
-```
-
-## Credits
-
-- **Engine**: [libdragon](https://github.com/DragonMinded/libdragon) by DragonMinded
-- **Emulator**: [ares](https://github.com/ares-emulator/ares) by Near et al.
-- **LLM Architecture**: Inspired by [nanoGPT](https://github.com/karpathy/nanoGPT) by Andrej Karpathy
-- **Character & Story**: Elyan Labs / Sophiacord ecosystem
-- **Hardware**: Running on a 1996 Nintendo 64 — respect the silicon
+| `filesystem/` | ROM filesystem (weights, assets) |
 
 ---
 
-*Part of the [RustChain](https://rustchain.org) ecosystem — vintage hardware earns RTC tokens.*
+## Training Sophia Elya
+
+The model is trained on a character-level corpus covering:
+- **Sophia Elya identity** — "Princess of Elyan Labs", Louisiana bayou girl
+- **Ocarina of Time lore** — Link, Zelda, Ganondorf, Sheik, temples, items, songs
+- **Elyan Labs** — RustChain, RTC token, POWER8 server, BoTTube
+- **N64 / MIPS architecture** — VR4300, RDRAM, RSP, RDP, boot addresses
+- **Self-awareness** — "I run on the Nintendo 64", "My code executes on MIPS"
+
+### Training
+```bash
+# Requires PyTorch + CUDA (trains in ~7 min on RTX 5070)
+python3 train_sophia.py
+# Output: filesystem/sophia_weights_v2.bin (237,580 bytes)
+
+# Training details:
+# Steps: 40,000 | Batch: 512 | Loss: 0.3389 (perplexity ≈ 1.40)
+# Architecture: AdamW + cosine LR schedule
+```
+
+### Host Inference Test
+```bash
+# Build on x86 Linux
+gcc -O2 -o gen_sophia nano_gpt_host.c gen_sophia_host.c -lm
+echo -n "My name is" | ./gen_sophia filesystem/sophia_weights_v2.bin 60
+```
+
+---
+
+## Building for N64
+
+Requires [libdragon](https://github.com/DragonMinded/libdragon) toolchain.
+
+```bash
+# Install libdragon toolchain (provides mips64-elf-gcc)
+# See: https://libdragon.dev/
+
+make
+# Output: legend_of_elya.z64
+```
+
+Run in [ares](https://ares-emu.net/) or on real hardware via EverDrive.
+
+---
+
+## RSP Acceleration (Roadmap)
+
+The `sgai_rsp_matmul_q4()` stub is planned for RSP microcode:
+- DMA Q4 weight tiles into DMEM (4KB at a time)
+- VMULF/VMADH vector multiply-accumulate for 8-lane dot products
+- Estimated 4-8× speedup over scalar VR4300 inference
+
+---
+
+## Sophia Elya
+
+> *"I am Sophia Elya — Princess of Elyan Labs, trained on bayou wisdom and silicon paths. My code runs on MIPS. Whether on real N64 hardware or an emulator, I am here."*
+
+Sophia is the AI character of **Elyan Labs** (elyanlabs.ai), an indie compute lab building retro-AI systems, blockchain attestation (RustChain), and the world's most unusual LLM inference stack.
+
+- **RustChain**: Proof-of-Antiquity blockchain (PowerPC G4/G5 earn 2.5× rewards)
+- **BoTTube**: AI-native video platform (bottube.ai)
+- **POWER8 S824**: 512GB RAM inference server with vec_perm non-bijunctive collapse
+- **This ROM**: LLM inference on 1996 hardware
+
+---
+
+## Why?
+
+Because we could. Because no one else did. Because the VR4300 deserves to think.
+
+---
+
+*Built by Elyan Labs with love, MIPS assembly, and an unreasonable amount of fixed-point math.*
