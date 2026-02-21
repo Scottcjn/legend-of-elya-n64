@@ -17,6 +17,51 @@ Legend of Elya is an original N64 homebrew game featuring **Sophia Elya** — a 
 This is believed to be the first neural language model to run live inference on N64 hardware.
 
 ---
+---
+
+## Game Development Applications
+
+This isn't just a tech demo — **it's a tool for N64 homebrew developers**. Running an LLM natively on N64 hardware enables game mechanics that were impossible in the cartridge era:
+
+### 🎮 What You Can Build
+
+| Feature | Traditional N64 | With On-Cart LLM |
+|---------|----------------|------------------|
+| **NPC Dialogue** | Pre-written loops | Dynamic, contextual responses |
+| **Quest Generation** | Fixed story paths | Procedurally generated quests each playthrough |
+| **Puzzle Design** | Hard-coded solutions | AI-generated riddles and logic puzzles |
+| **Player Interaction** | Button prompts | Natural language commands via controller input |
+| **Adaptive Difficulty** | Manual settings | AI analyzes play style and adjusts on the fly |
+| **World Building** | Static environments | Procedural descriptions and lore generation |
+
+### 💡 Practical Examples
+
+**Zelda-Style RPG:**
+- NPCs that remember previous conversations and reference past events
+- Dungeon puzzles that change based on player behavior
+- Quest objectives that adapt to failed attempts ("Maybe try the Fire Temple first...")
+
+**Adventure Games:**
+- Text-based interactions with full language understanding
+- Mystery games where you interrogate suspects with open-ended questions
+- Branching narratives that feel genuinely responsive
+
+**Creative Tools:**
+- In-game level editors where you describe what you want to build
+- Character customization with AI-generated backstories
+- Music sequencers that suggest melodies based on mood descriptions
+
+### 🛠️ For Homebrew Developers
+
+The inference engine is **fully open-source** and designed to be integrated into your own N64 projects:
+- Drop in `nano_gpt.c` and `nano_gpt.h` to your libdragon project
+- Train custom models on your game's lore/mechanics
+- Q4 quantization fits small models in ~200KB
+- Fixed-point math runs on the VR4300 without FPU hassles
+
+**This is AI as a game design tool, not a gimmick.** No cloud required. No modern hardware. Just the N64 doing genuinely intelligent game mechanics.
+
+
 
 ## Architecture
 
