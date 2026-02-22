@@ -721,8 +721,8 @@ static void update_generating_step(void) {
         }
     } else {
         // Phase 1: generate one output token
-        // temp_q8=8 → T=0.03125 (very near greedy — forces model to follow strongest patterns)
-        uint8_t tok = sgai_next_token(&G.ai, G.gen_last_tok, 8);
+        // temp_q8=64 → T=0.25 (mild randomness — varied but coherent outputs for demo)
+        uint8_t tok = sgai_next_token(&G.ai, G.gen_last_tok, 64);
         G.gen_last_tok = tok;
         G.gen_out_count++;
 
