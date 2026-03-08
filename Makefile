@@ -11,7 +11,7 @@ N64_INST ?= /home/sophia5070node/n64dev/mips64-toolchain
 BUILD_DIR = build
 include $(N64_INST)/n64.mk
 
-all: legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_3d.z64
+all: legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_rpc.z64 legend_of_elya_mining.z64 legend_of_elya_3d.z64
 
 # --- Base ROM (2D LLM demo) ---
 base: legend_of_elya.z64
@@ -46,6 +46,32 @@ $(BUILD_DIR)/legend_of_elya_rsp.elf: $(BUILD_DIR)/legend_of_elya_rsp.o $(BUILD_D
 
 legend_of_elya_rsp.z64: N64_ROM_TITLE="Elya RSP"
 legend_of_elya_rsp.z64: $(BUILD_DIR)/legend_of_elya_rsp.dfs
+
+# --- RPC Bridge ROM (2D LLM + remote inference via Pico bridge) ---
+rpc: legend_of_elya_rpc.z64
+
+$(BUILD_DIR)/legend_of_elya_rpc.dfs: filesystem/sophia_weights.bin
+
+$(BUILD_DIR)/pak_io.o: bridge/n64/pak_io.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -Ibridge/n64 -o $@ $<
+
+$(BUILD_DIR)/n64_llm_rpc.o: bridge/n64/n64_llm_rpc.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -Ibridge/n64 -o $@ $<
+
+$(BUILD_DIR)/nano_gpt_rpc.o: nano_gpt.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RPC_LLM -Ibridge/n64 -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_rpc.o: legend_of_elya.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RPC_LLM -Ibridge/n64 -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_rpc.elf: $(BUILD_DIR)/legend_of_elya_rpc.o $(BUILD_DIR)/nano_gpt_rpc.o $(BUILD_DIR)/pak_io.o $(BUILD_DIR)/n64_llm_rpc.o
+
+legend_of_elya_rpc.z64: N64_ROM_TITLE="Elya RPC"
+legend_of_elya_rpc.z64: $(BUILD_DIR)/legend_of_elya_rpc.dfs
 
 # --- Mining ROM (2D + RustChain attestation) ---
 mining: legend_of_elya_mining.z64
@@ -84,8 +110,8 @@ legend_of_elya_3d.z64: N64_ROM_TITLE="Elya 3D"
 legend_of_elya_3d.z64: $(BUILD_DIR)/legend_of_elya_3d.dfs
 
 clean:
-	rm -rf $(BUILD_DIR) legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_3d.z64
+	rm -rf $(BUILD_DIR) legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_rpc.z64 legend_of_elya_mining.z64 legend_of_elya_3d.z64
 
 -include $(wildcard $(BUILD_DIR)/*.d)
 
-.PHONY: all base base-rsp mining 3d clean
+.PHONY: all base base-rsp rpc mining 3d clean

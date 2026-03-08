@@ -18,6 +18,10 @@
 #include <math.h>
 #include "nano_gpt.h"
 
+#ifdef USE_RPC_LLM
+#include "n64_llm_rpc.h"
+#endif
+
 // ─── Game State ───────────────────────────────────────────────────────────────
 
 typedef enum {
@@ -66,6 +70,11 @@ typedef struct {
     float    perf_cpu_pct;       // CPU% used by inference (0-100)
     float    perf_toks_precise;  // precise tok/s using cycle counter
     int      perf_show;          // 1 = show performance overlay
+#ifdef USE_RPC_LLM
+    int      rpc_active;         // 1 = bridge detected, using RPC
+    int      rpc_pending;        // 1 = waiting for RPC response
+    uint32_t rpc_send_us;        // timestamp when RPC request sent
+#endif
 } GameCtx;
 
 static GameCtx G;
@@ -647,6 +656,21 @@ static void scene_dungeon(void) {
         fillrect(130, bar_y,    1, 6, RGBA32(100, 100, 100, 255));
         fillrect(213, bar_y,   1, 6, RGBA32(100, 100, 100, 255));
 #endif
+#ifdef USE_RPC_LLM
+        if (G.rpc_active) {
+            // RPC bar (purple = remote inference)
+            fillrect(130, bar_y, 84, 6, RGBA32(20, 20, 20, 255));
+            if (G.state == STATE_GENERATING) {
+                // Pulsing bar while waiting for RPC response
+                int pulse = (G.frame / 4) % 60;
+                fillrect(132, bar_y+1, pulse + 20, 4, RGBA32(180, 80, 255, 255));
+            }
+            fillrect(130, bar_y,   84, 1, RGBA32(140, 80, 180, 255));
+            fillrect(130, bar_y+5, 84, 1, RGBA32(140, 80, 180, 255));
+            fillrect(130, bar_y,    1, 6, RGBA32(140, 80, 180, 255));
+            fillrect(213, bar_y,   1, 6, RGBA32(140, 80, 180, 255));
+        }
+#endif
 
         // Tok/s numeric right-aligned
         {
@@ -804,6 +828,72 @@ static void draw_text(surface_t *disp) {
 // ─── Per-frame generation (one token per frame) ───────────────────────────────
 
 static void update_generating_step(void) {
+#ifdef USE_RPC_LLM
+    /* RPC path: send prompt to bridge, poll for response */
+    if (G.rpc_active) {
+        if (!G.rpc_pending && G.gen_plen > 0) {
+            /* Build prompt string from gen_pbuf */
+            char prompt_str[65];
+            int plen = G.gen_plen;
+            if (plen > 64) plen = 64;
+            for (int i = 0; i < plen; i++)
+                prompt_str[i] = (char)G.gen_pbuf[i];
+            prompt_str[plen] = '\0';
+
+            /* Send RPC request: max 80 tokens, temp=0.25 (Q8=64) */
+            if (llm_rpc_request(prompt_str, 80, 64)) {
+                G.rpc_pending = 1;
+                G.rpc_send_us = CYCLES_TO_US(TICKS_READ());
+                debugf("RPC sent: '%s'\n", prompt_str);
+            }
+        }
+
+        if (G.rpc_pending) {
+            int status = llm_rpc_poll();
+            if (status == LLM_STATUS_READY) {
+                /* Got response! Copy to dialog buffer */
+                int rlen = g_llm_rpc.response_len;
+                if (rlen > 80) rlen = 80;
+                for (int i = 0; i < rlen; i++) {
+                    uint8_t c = g_llm_rpc.response_buf[i];
+                    if (c >= 32 && c <= 126)
+                        G.dialog_buf[G.dialog_len++] = c;
+                    if (c == '\n' || c == '\0') break;
+                }
+                G.dialog_char = G.dialog_len;
+
+                /* Compute RPC latency */
+                uint32_t now_us = CYCLES_TO_US(TICKS_READ());
+                G.perf_gen_total_us = now_us - G.rpc_send_us;
+                if (G.perf_gen_total_us > 1000) {
+                    G.perf_toks_precise = (float)G.dialog_len * 1000000.0f / (float)G.perf_gen_total_us;
+                    G.gen_toks_sec = G.perf_toks_precise;
+                }
+                G.perf_cpu_pct = 5.0f;  /* RPC = minimal CPU usage */
+
+                filter_dialog_buf();
+                G.dialog_done = 1;
+                G.state = STATE_DIALOG;
+                G.rpc_pending = 0;
+                debugf("RPC response (%d us): '%s'\n",
+                       (int)G.perf_gen_total_us, G.dialog_buf);
+                return;
+            } else if (status == LLM_STATUS_ERROR) {
+                /* RPC failed, fall through to local inference */
+                G.rpc_pending = 0;
+                G.rpc_active = 0;  /* Disable RPC, use local from now on */
+                debugf("RPC error — falling back to local LLM\n");
+            }
+            /* Still pending — show waiting animation */
+            if (G.rpc_pending) {
+                G.gen_out_count++;
+                G.perf_cpu_pct = 2.0f;
+                return;
+            }
+        }
+    }
+#endif
+
     if (!G.ai_ready) {
         // Canned mode: reveal one character every other frame
         if ((G.frame & 1) == 0 && G.dialog_char < G.dialog_len)
@@ -900,6 +990,9 @@ static void start_dialog(void) {
     G.perf_cpu_pct      = 0.0f;
     G.perf_toks_precise = 0.0f;
     G.perf_show         = 1;
+#ifdef USE_RPC_LLM
+    G.rpc_pending       = 0;
+#endif
     memset(G.dialog_buf, 0, sizeof(G.dialog_buf));
 
     /* Hardware entropy seed selection — RIP-PoA oscillator trick:
@@ -969,6 +1062,16 @@ static void game_init(void) {
     asm volatile("mfc0 %0, $9" : "=r"(_cp0));
     G.anniversary_cp0 = _cp0;
     G.ai.kv  = &G.kv;
+#ifdef USE_RPC_LLM
+    /* Try to detect Pico bridge for RPC inference */
+    G.rpc_active = llm_rpc_detect();
+    if (G.rpc_active) {
+        debugf("RPC bridge detected! Using remote inference.\n");
+    } else {
+        debugf("No RPC bridge — using on-cartridge LLM.\n");
+    }
+#endif
+
     G.hearts = 8;    // 4 full hearts
     G.magic  = 128;  // full magic bar
 
