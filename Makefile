@@ -8,12 +8,21 @@
 #   make rpc-mining  -> legend_of_elya_rpc_mining.z64  (RPC LLM + Pico + RTC mining)
 #   make 3d          -> legend_of_elya_3d.z64          (3D + combat)
 #   make all         -> all five
+#
+# Host Tools:
+#   make reference   -> reference_cli                  (Host-side reference runner)
 
 N64_INST ?= /home/sophia5070node/n64dev/mips64-toolchain
 BUILD_DIR = build
 include $(N64_INST)/n64.mk
 
 all: legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64
+
+# --- Host-side Reference CLI (x86-64 Linux) ---
+reference: reference_cli
+
+reference_cli: reference_cli.c nano_gpt.c
+	gcc -O2 -o $@ $^ -lm
 
 # --- Base ROM (CPU LLM, standalone, no Pico) ---
 base: legend_of_elya.z64
