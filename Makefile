@@ -14,15 +14,16 @@
 
 N64_INST ?= /home/sophia5070node/n64dev/mips64-toolchain
 BUILD_DIR = build
+HOST_CC ?= gcc
+HOST_CFLAGS ?= -O3 -std=c99 -Wall -Wextra -pedantic
+
+ifeq ($(MAKECMDGOALS),reference)
+else
 include $(N64_INST)/n64.mk
+endif
 
 all: legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64
 
-# --- Host-side Reference CLI (x86-64 Linux) ---
-reference: reference_cli
-
-reference_cli: reference_cli.c nano_gpt.c
-	gcc -O2 -o $@ $^ -lm
 
 # --- Base ROM (CPU LLM, standalone, no Pico) ---
 base: legend_of_elya.z64
@@ -113,8 +114,13 @@ legend_of_elya_3d.z64: N64_ROM_TITLE="Elya 3D"
 legend_of_elya_3d.z64: $(BUILD_DIR)/legend_of_elya_3d.dfs
 
 clean:
-	rm -rf $(BUILD_DIR) legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64
+	rm -rf $(BUILD_DIR) legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64 reference_cli
 
 -include $(wildcard $(BUILD_DIR)/*.d)
 
-.PHONY: all base base-rsp mining rpc-mining 3d clean
+.PHONY: all base base-rsp mining rpc-mining 3d reference clean
+
+reference: reference_cli
+reference_cli: reference_cli.c
+	gcc -O3 -std=c99 -Wall -o $@ $< -lm
+
