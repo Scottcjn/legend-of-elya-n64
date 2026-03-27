@@ -26,6 +26,7 @@ typedef enum {
     STATE_DUNGEON,
     STATE_DIALOG,
     STATE_GENERATING,
+    STATE_KEYBOARD,      // On-screen D-pad keyboard for custom NPC prompts
 } GameState;
 
 typedef struct {
@@ -49,6 +50,12 @@ typedef struct {
     int gen_out_count;      // output tokens generated
     int gen_start_frame;    // frame when output phase began
     float gen_toks_sec;     // computed tokens/second
+    // On-screen keyboard state
+    char kb_buf[33];        // 32-char input buffer + null terminator
+    int  kb_len;            // number of characters typed
+    int  kb_col;            // cursor column (0..KB_COLS-1)
+    int  kb_row;            // cursor row (0..KB_ROWS-1)
+    int  kb_blink;          // cursor blink frame counter
     // Music sequencer
     int music_note_idx;     // current note in sequence
     int music_sample_pos;   // samples elapsed in current note
@@ -61,6 +68,238 @@ typedef struct {
 } GameCtx;
 
 static GameCtx G;
+
+// Forward declaration (defined later after music/audio setup)
+static void fillrect(int x, int y, int w, int h, color_t c);
+
+// ─── On-Screen D-Pad Keyboard ─────────────────────────────────────────────────
+// Grid: 7 columns × 6 rows = 42 keys
+// Layout: A-Z (26) + space + punctuation + BACK(←) + DONE(✓)
+// Fits comfortably on 320×240 at N64 resolution
+
+#define KB_COLS      7
+#define KB_ROWS      6
+#define KB_MAX_LEN   32
+
+// Character map: row-major, 7 cols × 6 rows = 42 entries
+// \x01 = BACK(delete), \x02 = DONE(submit), \x00 = unused
+static const char KB_KEYS[KB_ROWS][KB_COLS] = {
+    { 'A', 'B', 'C', 'D', 'E', 'F', 'G' },
+    { 'H', 'I', 'J', 'K', 'L', 'M', 'N' },
+    { 'O', 'P', 'Q', 'R', 'S', 'T', 'U' },
+    { 'V', 'W', 'X', 'Y', 'Z', ' ', '!' },
+    { '?', '.', ',', '\'',':', '-', '0' },
+    { '1', '2', '3', '4', '5', '\x01', '\x02' },
+};
+
+// Key cell dimensions and top-left origin on screen
+#define KB_CELL_W    40    // px per key cell (320 / 8 ≈ 40)
+#define KB_CELL_H    16    // px per key cell
+#define KB_ORIG_X    12    // left margin
+#define KB_ORIG_Y    82    // top of grid (leaves room for typed text above)
+
+// Label strings for special keys
+#define KB_LABEL_BACK  "<"
+#define KB_LABEL_DONE  "OK"
+
+// ─── Keyboard draw (RDP fill pass) ────────────────────────────────────────────
+
+static void scene_keyboard_bg(void) {
+    // Dark background panel
+    fillrect(0, 0, 320, 240, RGBA32(4, 4, 28, 255));
+
+    // Title bar
+    fillrect(0, 0, 320, 14, RGBA32(0, 0, 60, 255));
+    fillrect(0, 13, 320, 1, RGBA32(215, 175, 0, 255));
+
+    // Input text box (shows typed characters)
+    fillrect(8, 20, 304, 18, RGBA32(0, 0, 40, 255));
+    fillrect(8, 20, 304, 1,  RGBA32(100, 100, 200, 255));
+    fillrect(8, 37, 304, 1,  RGBA32(100, 100, 200, 255));
+    fillrect(8, 20,   1, 18, RGBA32(100, 100, 200, 255));
+    fillrect(311,20,  1, 18, RGBA32(100, 100, 200, 255));
+
+    // Hint bar at very bottom
+    fillrect(0, 228, 320, 12, RGBA32(0, 0, 40, 255));
+    fillrect(0, 228, 320, 1,  RGBA32(215, 175, 0, 255));
+
+    // Draw key grid cells
+    for (int r = 0; r < KB_ROWS; r++) {
+        for (int c = 0; c < KB_COLS; c++) {
+            char key = KB_KEYS[r][c];
+            if (key == '\x00') continue;
+
+            int x = KB_ORIG_X + c * KB_CELL_W;
+            int y = KB_ORIG_Y + r * KB_CELL_H;
+            int is_cursor = (r == G.kb_row && c == G.kb_col);
+
+            color_t bg, border;
+            if (is_cursor) {
+                // Highlighted cursor cell
+                bg     = RGBA32(200, 160, 0, 255);
+                border = RGBA32(255, 220, 60, 255);
+            } else if (key == '\x01') {
+                // BACK key — reddish
+                bg     = RGBA32(100, 30, 30, 255);
+                border = RGBA32(180, 60, 60, 255);
+            } else if (key == '\x02') {
+                // DONE key — greenish
+                bg     = RGBA32(20, 80, 20, 255);
+                border = RGBA32(60, 200, 60, 255);
+            } else {
+                bg     = RGBA32(20, 20, 60, 255);
+                border = RGBA32(60, 60, 120, 255);
+            }
+
+            // Fill cell background (inset 1px)
+            fillrect(x + 1, y + 1, KB_CELL_W - 2, KB_CELL_H - 2, bg);
+            // Border (1px outline)
+            fillrect(x,     y,     KB_CELL_W,     1,              border);
+            fillrect(x,     y + KB_CELL_H - 1, KB_CELL_W, 1,     border);
+            fillrect(x,     y,     1,             KB_CELL_H,      border);
+            fillrect(x + KB_CELL_W - 1, y, 1,    KB_CELL_H,      border);
+        }
+    }
+}
+
+// ─── Keyboard text pass (CPU overlay) ─────────────────────────────────────────
+
+static void draw_keyboard_text(surface_t *disp) {
+    // Title
+    graphics_draw_text(disp, 70, 3, "Type your question for Sophia:");
+
+    // Typed text buffer
+    char display_buf[35];
+    int dlen = G.kb_len;
+    if (dlen > 32) dlen = 32;
+    for (int i = 0; i < dlen; i++)
+        display_buf[i] = G.kb_buf[i];
+    // Blinking cursor
+    if ((G.kb_blink / 15) & 1)
+        display_buf[dlen++] = '_';
+    display_buf[dlen] = '\0';
+    graphics_draw_text(disp, 12, 25, display_buf);
+
+    // Draw key labels
+    for (int r = 0; r < KB_ROWS; r++) {
+        for (int c = 0; c < KB_COLS; c++) {
+            char key = KB_KEYS[r][c];
+            if (key == '\x00') continue;
+
+            int x = KB_ORIG_X + c * KB_CELL_W;
+            int y = KB_ORIG_Y + r * KB_CELL_H;
+            // Center label: each char ~6px wide, cell 40px → offset ~(40-6)/2 = 17
+            // For single char center: x + (40 - 6) / 2 = x + 17
+            char label[3];
+            if (key == '\x01') {
+                label[0] = '<'; label[1] = '\0';
+            } else if (key == '\x02') {
+                label[0] = 'O'; label[1] = 'K'; label[2] = '\0';
+            } else if (key == ' ') {
+                label[0] = '_'; label[1] = '\0';  // visible space indicator
+            } else {
+                label[0] = key; label[1] = '\0';
+            }
+
+            // Center single char in cell
+            int lw = (key == '\x02') ? 12 : 6;  // OK = 2 chars * 6
+            int tx = x + (KB_CELL_W - lw) / 2;
+            int ty = y + (KB_CELL_H - 7) / 2 + 1;
+            graphics_draw_text(disp, tx, ty, label);
+        }
+    }
+
+    // Hint bar
+    graphics_draw_text(disp, 8, 230, "D:move  A:type  B:del  START:send");
+}
+
+// ─── Keyboard input handler ───────────────────────────────────────────────────
+
+static void keyboard_init(void) {
+    memset(G.kb_buf, 0, sizeof(G.kb_buf));
+    G.kb_len  = 0;
+    G.kb_col  = 0;
+    G.kb_row  = 0;
+    G.kb_blink = 0;
+}
+
+/* Submit the typed keyboard buffer as an LLM prompt.
+ * Appends ": " suffix so it matches training format, then enters GENERATING. */
+static void keyboard_submit(void) {
+    char prompt[40];
+    int plen = G.kb_len;
+    if (plen <= 0) return;
+    if (plen > 30) plen = 30;
+    memcpy(prompt, G.kb_buf, plen);
+    prompt[plen++] = ':';
+    prompt[plen++] = ' ';
+    prompt[plen]   = '\0';
+
+    G.state           = STATE_GENERATING;
+    G.dialog_char     = 0;
+    G.dialog_done     = 0;
+    G.dialog_len      = 0;
+    G.gen_out_count   = 0;
+    G.gen_start_frame = G.frame;
+    G.gen_toks_sec    = 0.0f;
+    memset(G.dialog_buf, 0, sizeof(G.dialog_buf));
+
+    if (G.ai_ready) {
+        sgai_reset(&G.ai);
+        if (plen > (int)sizeof(G.gen_pbuf) - 1)
+            plen = (int)sizeof(G.gen_pbuf) - 1;
+        memcpy(G.gen_pbuf, prompt, plen);
+        G.gen_plen     = plen;
+        G.gen_ppos     = 0;
+        G.gen_last_tok = G.gen_pbuf[0];
+    } else {
+        // Canned fallback — use frame counter for variety
+        uint32_t entropy = (uint32_t)(TICKS_READ()) ^ ((uint32_t)G.frame << 3);
+        const char *resp = CANNED[entropy % N_CANNED];
+        strncpy((char *)G.dialog_buf, resp, sizeof(G.dialog_buf) - 1);
+        G.dialog_len = (int)strlen(resp);
+        G.gen_plen   = 0;
+        G.gen_ppos   = 0;
+    }
+}
+
+static void handle_keyboard_input(struct controller_data *k) {
+    G.kb_blink++;
+
+    // D-pad navigation — wraps around grid edges
+    if (k->c[0].up)    { G.kb_row = (G.kb_row - 1 + KB_ROWS) % KB_ROWS; G.kb_blink = 0; }
+    if (k->c[0].down)  { G.kb_row = (G.kb_row + 1) % KB_ROWS;           G.kb_blink = 0; }
+    if (k->c[0].left)  { G.kb_col = (G.kb_col - 1 + KB_COLS) % KB_COLS; G.kb_blink = 0; }
+    if (k->c[0].right) { G.kb_col = (G.kb_col + 1) % KB_COLS;           G.kb_blink = 0; }
+
+    // A button: select character or trigger special action
+    if (k->c[0].A) {
+        char key = KB_KEYS[G.kb_row][G.kb_col];
+        if (key == '\x01') {
+            // BACK key — delete last character
+            if (G.kb_len > 0) G.kb_len--;
+            G.kb_buf[G.kb_len] = '\0';
+        } else if (key == '\x02') {
+            // OK/DONE key — submit prompt to LLM
+            keyboard_submit();
+        } else if (G.kb_len < KB_MAX_LEN) {
+            // Regular character — append to buffer
+            G.kb_buf[G.kb_len++] = key;
+            G.kb_buf[G.kb_len]   = '\0';
+        }
+    }
+
+    // B button: backspace shortcut (always accessible regardless of cursor)
+    if (k->c[0].B) {
+        if (G.kb_len > 0) G.kb_len--;
+        G.kb_buf[G.kb_len] = '\0';
+    }
+
+    // Start button: submit prompt directly (quick submit shortcut)
+    if (k->c[0].start && G.kb_len > 0) {
+        keyboard_submit();
+    }
+}
 
 /* N64 hardware entropy — XOR CPU cycle counter low bits with frame,
  * last token, AND prompt_idx (sequential counter).
@@ -640,7 +879,11 @@ static void draw_text(surface_t *disp) {
 
     case STATE_DUNGEON:
         graphics_draw_text(disp, 186, 3,  "MP");   // magic bar label
-        graphics_draw_text(disp,  10, 220, "[A] Talk to Sophia  (auto-attack)");
+        graphics_draw_text(disp,  10, 220, "[A] Talk  [B] Type  (auto-attack)");
+        break;
+
+    case STATE_KEYBOARD:
+        draw_keyboard_text(disp);
         break;
 
     case STATE_DIALOG:
@@ -814,12 +1057,20 @@ static void handle_input(void) {
         break;
     case STATE_DUNGEON:
         if (k.c[0].A) start_dialog();
+        if (k.c[0].B) {
+            // B opens on-screen keyboard for custom player input
+            keyboard_init();
+            G.state = STATE_KEYBOARD;
+        }
         break;
     case STATE_DIALOG:
         if (k.c[0].A) start_dialog();
         if (k.c[0].B) G.state = STATE_DUNGEON;
         break;
     case STATE_GENERATING:
+        break;
+    case STATE_KEYBOARD:
+        handle_keyboard_input(&k);
         break;
     }
 }
@@ -894,6 +1145,8 @@ int main(void) {
             fillrect(0, 0, 320, 240, RGBA32(0, 0, 20, 255));
             fillrect(30,  30, 260, 6, RGBA32(180, 140, 0, 255));
             fillrect(30, 130, 260, 6, RGBA32(180, 140, 0, 255));
+        } else if (G.state == STATE_KEYBOARD) {
+            scene_keyboard_bg();
         } else {
             scene_dungeon();
             if (G.state == STATE_DIALOG || G.state == STATE_GENERATING)
