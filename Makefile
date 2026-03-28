@@ -114,6 +114,14 @@ legend_of_elya_3d.z64: N64_ROM_TITLE="Elya 3D"
 legend_of_elya_3d.z64: $(BUILD_DIR)/legend_of_elya_3d.dfs
 
 clean:
+
+# --- Reference CLI (x86/ARM host) ---
+reference: reference_cli
+
+reference_cli: reference_cli.c
+	$(CC) -o reference_cli reference_cli.c -lm -std=c99
+
+.PHONY: reference
 	rm -rf $(BUILD_DIR) legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64 reference_cli
 
 -include $(wildcard $(BUILD_DIR)/*.d)
