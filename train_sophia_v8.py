@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """
 train_sophia_v8.py - Multi-persona nano-GPT trainer for Legend of Elya N64.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #ifndef N64_ATTEST_H
 #define N64_ATTEST_H
 

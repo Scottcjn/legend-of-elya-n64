@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /*
  * RSP-accelerated matmul — CPU-side driver
  *

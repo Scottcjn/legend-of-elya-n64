@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * N64 RTC Hardware Attestation — RustChain Proof-of-Antiquity for N64
  *

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """
 N64 LLM RPC Bridge — Remote inference for Legend of Elya
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Legend of Elya - Nintendo 64 Homebrew
  * World's First LLM-powered N64 Game

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Multi-NPC Mode — Expansion Pak 8MB Support
  * 

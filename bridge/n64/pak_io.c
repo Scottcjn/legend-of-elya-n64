@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /*
  * Minimal joybus pak I/O for N64 ↔ Pico bridge
  *

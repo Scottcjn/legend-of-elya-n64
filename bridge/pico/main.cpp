@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // N64 Pico Bridge - Full Attestation Relay
 // Handles POLL (bridge magic), READ, and WRITE (pak data relay)
 // Pak WRITE data forwarded over USB serial as PAK_W:ADDR:HEXDATA

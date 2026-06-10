@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #ifndef PAK_IO_H
 #define PAK_IO_H
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 # Pure Python Personality Pack Evaluator
 # Generates 20-prompt evaluation report
 

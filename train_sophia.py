@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 train_sophia_full.py — "Princess of Elyan Labs" nano-GPT
 Deep Ocarina of Time lore + Elyan Labs knowledge. 30k steps.

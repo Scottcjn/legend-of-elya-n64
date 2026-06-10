@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /*
  * nano_gpt.c - Sophia Elya AI: World's First N64 LLM
  *

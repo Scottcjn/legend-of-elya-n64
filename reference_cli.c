@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /*
  * reference_cli.c - Host-side reference runner for Legend of Elya N64.
  *

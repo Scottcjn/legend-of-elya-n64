@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 train_sophia_v7.py — Sophia Elya nano-GPT for N64 (4-LAYER, CTX=64)
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 #ifndef N64_LLM_RPC_H
 #define N64_LLM_RPC_H
 

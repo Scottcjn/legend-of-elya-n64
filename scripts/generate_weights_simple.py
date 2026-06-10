@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 # Simplified weight generator for N64 Personality Packs
 # Creates Q8 format .bin files without PyTorch dependency
 

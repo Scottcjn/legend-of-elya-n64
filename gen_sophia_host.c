@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /*
  * gen_sophia_host.c — host-side Sophia dialog generator
  *

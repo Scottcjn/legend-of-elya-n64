@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /*
  * N64 LLM RPC — Remote inference over Pico bridge
  *

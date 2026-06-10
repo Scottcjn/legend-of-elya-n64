@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """
 N64 Pico Bridge — Host-side serial bridge for RTC attestation.
 
