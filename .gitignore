@@ -4,3 +4,11 @@ build/
 *.elf
 *.dfs
 filesystem/sophia_weights.bin
+
+# N64 build outputs (rebuilt via Makefile)
+*.z64
+*.pak
+__pycache__/
+*.pyc
+# Large model weights (kept local; canonical source is filesystem/sophia_weights.bin)
+weights/*.bin
