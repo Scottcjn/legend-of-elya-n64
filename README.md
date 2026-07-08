@@ -42,7 +42,7 @@ attention — on a 93.75 MHz CPU from 1996.
 | Quantization | Q8 (int8 weights + float16 block scales, 32-weight blocks) |
 | Weight file | **458 KB** on cartridge ROM |
 | Inference math | **Float32** on MIPS R4300i FPU |
-| Speed | **~60 tok/s** in emulator, ~1-3 tok/s on real hardware |
+| Speed | **~60 tok/s** in emulator, ~1-3 tok/s on real hardware (scalar CPU only — no RSP acceleration; see below) |
 | KV cache | 256 KB in RDRAM |
 | Total RDRAM | ~263 KB (KV cache + 7KB scratch) |
 
@@ -59,14 +59,44 @@ attention — on a 93.75 MHz CPU from 1996.
 
 ---
 
+## Acceleration: RSP Build and the RPI Engine
+
+The ~1-3 tok/s real-hardware number above is the **scalar CPU baseline** — the plain
+`legend_of_elya.z64` build runs everything on the VR4300. Two faster paths ship in this repo:
+
+### RSP-accelerated build (`make base-rsp`)
+
+`rsp_matmul.S` is hand-written RSP microcode that runs the matmul on the N64's
+8-lane vector unit: the CPU driver (`matmul_rsp_drv.c`) converts float32 activations
+to int16 fixed-point, DMAs tiles into the RSP's 4KB DMEM, and dispatches 8 output
+rows per call. `nano_gpt.c` uses it when built with `USE_RSP_MATMUL`
+(the `legend_of_elya_rsp.z64` target). Projected 4-8× over the scalar baseline;
+a measured tok/s on real hardware is still pending — benchmark reports welcome.
+
+### RPI engine (`rpi/`) — zero-multiply inference
+
+RPI (Resonant Permutation Inference) is a second, separate engine: instead of
+matrix multiply, Sophia speaks through **permutation tables** (bigram/trigram
+counts distilled from a larger teacher model, xorshift32 PRNG, zero multiplies,
+zero FPU). The 868KB `sophia_game_n64.rpi` model fits in ROM alongside the game.
+Roughly ~100× faster than the transformer on the R4300i (~1000+ tok/s estimated) —
+a different quality/speed trade, not a transformer.
+
+---
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `nano_gpt.c` | Float32 GPT inference engine (MIPS R4300i) |
 | `nano_gpt.h` | Model struct definitions, KV cache, API |
-| `legend_of_elya.c` | Game: dungeon scene, sprites, dialog, music, HUD |
+| `rsp_matmul.S` / `matmul_rsp_drv.c` | RSP vector-unit matmul microcode + CPU driver (`make base-rsp`) |
+| `rpi/` | RPI zero-multiply permutation inference engine + 868KB game model |
+| `multi_npc.c` | Expansion Pak multi-NPC mode (3 AI characters) |
+| `legend_of_elya.c` | Game: dungeon scene, sprites, dialog, music, HUD, D-pad keyboard |
 | `train_sophia_v5.py` | PyTorch training + Q8 weight export |
+| `train_sophia_v8.py` | v8 training pipeline — 4 NPC personality packs |
+| `reference_cli.c` | Host-side reference CLI (`make reference`) for x86 parity testing |
 | `weights/sophia_weights.bin` | Pre-trained v5 weights (458KB, ready to use) |
 | `Makefile` | libdragon build system |
 | `src/` | Latest source snapshots |
@@ -92,8 +122,11 @@ export N64_INST=/path/to/mips64-toolchain
 # Place weights in filesystem/
 cp weights/sophia_weights.bin filesystem/
 
-# Build
-make clean && make
+# Build (base ROM)
+make clean && make base
+
+# Or build the RSP-accelerated variant
+make base-rsp   # -> legend_of_elya_rsp.z64
 
 # Run in ares
 ares legend_of_elya.z64
@@ -157,11 +190,11 @@ The goal is to shrink, optimize, and package this into a **reusable SDK** that a
 - [ ] Extended training corpus (500+ QA pairs across game domains)
 - [ ] Longer training runs (200K+ steps) for better convergence
 - [ ] Context-aware prompting (NPC name, location, game state as prefix tokens)
-- [ ] Multiple personality weights (warrior NPC, merchant, sage, villain)
+- [x] Multiple personality weights — Personality Pack Trainer, 4 distinct NPC personas (`train_sophia_v8.py`)
 - [ ] Fine-tune for specific game genres (RPG, adventure, puzzle)
 
 ### Phase 3: Performance Optimization
-- [ ] **RSP microcode acceleration** — the N64's RSP has 8-lane SIMD (`VMULF`/`VMADH`); offloading matmul to RSP could give 4-8× speedup over scalar VR4300
+- [x] **RSP microcode acceleration** — implemented (`rsp_matmul.S` + `matmul_rsp_drv.c`, `make base-rsp`): 8-lane int16 matmul on the RSP, 8 output rows per dispatch. Projected 4-8× over scalar VR4300; measured on-hardware tok/s still pending
 - [ ] **Q4 quantization** — halve weight size to ~230KB, fit more model or more NPCs
 - [ ] **Tiled matmul** — process weights in cache-friendly blocks to reduce RDRAM stalls
 - [ ] **Speculative generation** — pre-generate during idle frames (exploration, cutscenes)
@@ -184,13 +217,13 @@ The goal is to shrink, optimize, and package this into a **reusable SDK** that a
   // Per-frame generation (non-blocking, 1 token per frame)
   int done = n64llm_step(npc);
   ```
-- [ ] **Multiple NPC support** — share weights, separate KV caches (~256KB each)
-- [ ] **Weight format tools** — Python scripts to train custom NPC personalities
-- [ ] **Expansion Pak support** — 8MB mode enables 6-8 layer models or multiple NPCs
+- [x] **Multiple NPC support** — Expansion Pak multi-NPC mode, 3 AI characters (`multi_npc.c`)
+- [x] **Weight format tools** — Python training pipeline for custom NPC personalities (`train_sophia_v8.py`)
+- [x] **Expansion Pak support** — 8MB mode working: 8.4M-param Large model with two-phase training, multi-NPC mode
 - [ ] **Example ROMs** — tavern scene with 3 NPCs, shop with merchant, quest giver
 
 ### Phase 5: Advanced Features
-- [ ] **Player text input** — on-screen keyboard (D-pad character picker)
+- [x] **Player text input** — on-screen D-pad keyboard
 - [ ] **Game state injection** — feed inventory, health, location as context tokens
 - [ ] **Emotional state** — NPC mood affects response style (scared, friendly, hostile)
 - [ ] **Memory** — persist key facts across conversations using save file
@@ -204,7 +237,7 @@ The goal is to shrink, optimize, and package this into a **reusable SDK** that a
 | Tiny | 2 | 64 | ~100K | ~60KB | ~70KB | Simple responses, many NPCs |
 | Small | 4 | 128 | 819K | 458KB | 263KB | Current — single NPC dialog |
 | Medium | 6 | 192 | ~2.8M | ~1.5MB | 600KB | Rich dialog, Expansion Pak |
-| Large | 8 | 256 | ~8.4M | ~4.2MB | 1.6MB | Full conversations, 8MB mode |
+| Large | 8 | 256 | ~8.4M | ~4.2MB | 1.6MB | Implemented — Expansion Pak, two-phase training |
 
 ---
 
