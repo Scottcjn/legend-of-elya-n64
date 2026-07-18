@@ -1,5 +1,9 @@
 # Cobalt Qube 3 — Sophia's transformer on a 1998 AMD K6-2
 
+![Sun Cobalt Qube 3](cobalt_qube3.jpg)
+
+*The blue cube itself — a Sun Cobalt Qube 3.*
+
 A port of the `src/` nano-GPT engine to run on a **Sun Cobalt Qube 3**: AMD K6-2/450,
 64MB RAM, stock Cobalt Linux (kernel 2.2.16, glibc 2.1.3, gcc 2.95.2). The 819K-parameter
 transformer that first ran on an N64 (`../src/`), now on late-90s x86 silicon.
@@ -45,3 +49,6 @@ Flags: `-w` weights, `-p` prompt, `-n` max tokens, `-t` temperature (q8, 256=1.0
 ## License
 
 MIT, matching the parent project. Engine © the Legend of Elya authors.
+
+---
+*Photo: Cobalt Qube 3, by Wikipedia user Rikva — public domain (via Wikimedia Commons).*
