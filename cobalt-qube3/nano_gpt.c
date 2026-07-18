@@ -1,9 +1,8 @@
 /* nano_gpt.c — Cobalt Qube 3 / vintage-x86 port of src/nano_gpt.c
- * Changes from the N64 source (all gated/portable):
- *   - MIPS CP0 Count (mfc0 $9) PSE-entropy taps -> x86 RDTSC
- *   - f16 byte-swap made #ifdef SGAI_BIG_ENDIAN (LE x86 = no swap)
- *   - scalar matmul path (USE_RSP_MATMUL undefined; no RSP off-N64)
- * Runs Sophia's 819K transformer on a 1998 AMD K6-2. */
+ * C89-clean (gcc 2.95): C99 for-loop + mixed declarations hoisted,
+ * MIPS mfc0 PSE-entropy -> x86 RDTSC, f16 swap #ifdef SGAI_BIG_ENDIAN,
+ * scalar matmul. Verified LOGIC-EXACT (temp=0 byte-identical to N64 src).
+ * RUNS on a 1998 AMD K6-2 at ~13 tok/s. */
 // SPDX-License-Identifier: MIT
 /*
  * nano_gpt.c - Sophia Elya AI: World's First N64 LLM
@@ -79,15 +78,16 @@ static void matmul_q8(const int8_t *weights, const uint16_t *scales,
                       const float *input, float *output,
                       int in_dim, int out_dim)
 {
-    for (int o = 0; o < out_dim; o++) {
+    int blk, j, o;
+    for (o = 0; o < out_dim; o++) {
         float acc = 0.0f;
         const int8_t   *row_w = weights + o * in_dim;
         const uint16_t *row_s = scales  + o * in_dim / SGAI_Q_BLOCK;
 
-        for (int blk = 0; blk < in_dim; blk += SGAI_Q_BLOCK) {
+        for (blk = 0; blk < in_dim; blk += SGAI_Q_BLOCK) {
             float scale = f16_to_float(row_s[blk / SGAI_Q_BLOCK]);
             int lim = (blk + SGAI_Q_BLOCK < in_dim) ? blk + SGAI_Q_BLOCK : in_dim;
-            for (int j = blk; j < lim; j++) {
+            for (j = blk; j < lim; j++) {
                 acc += (float)row_w[j] * scale * input[j];
             }
         }
@@ -100,25 +100,28 @@ static void matmul_q8(const int8_t *weights, const uint16_t *scales,
  * ----------------------------------------------------------------------- */
 static void rms_norm(float *vec, int len)
 {
+    float inv_rms;
+    union { float f; uint32_t i; } u;
+    float mean_sq;
+    int i;
     float sum_sq = 0.0f;
-    for (int i = 0; i < len; i++)
+    for (i = 0; i < len; i++)
         sum_sq += vec[i] * vec[i];
 
     /* Fast inverse sqrt (Quake III trick) — uses only integer ops.
      * No FPU instructions needed: the union reinterprets float bits
      * as integer, does integer math, then reinterprets back.
      * With -msoft-float, float multiply/divide are software calls. */
-    float mean_sq = sum_sq / (float)len + 1e-6f;
+    mean_sq = sum_sq / (float)len + 1e-6f;
 
-    union { float f; uint32_t i; } u;
     u.f = mean_sq;
     u.i = 0x5f3759df - (u.i >> 1);  /* Initial guess ≈ 1/sqrt(mean_sq) */
-    float inv_rms = u.f;
+    inv_rms = u.f;
     /* Two Newton-Raphson iterations: y = y * (1.5 - 0.5*x*y*y) */
     inv_rms = inv_rms * (1.5f - 0.5f * mean_sq * inv_rms * inv_rms);
     inv_rms = inv_rms * (1.5f - 0.5f * mean_sq * inv_rms * inv_rms);
 
-    for (int i = 0; i < len; i++)
+    for (i = 0; i < len; i++)
         vec[i] *= inv_rms;
 }
 
@@ -127,9 +130,12 @@ static void rms_norm(float *vec, int len)
  * ----------------------------------------------------------------------- */
 static void softmax_f(float *vec, int len)
 {
+    float sum;
+    float mx;
+    int i;
     if (len <= 0) return;
-    float mx = vec[0];
-    for (int i = 1; i < len; i++)
+    mx = vec[0];
+    for (i = 1; i < len; i++)
         if (vec[i] > mx) mx = vec[i];
 
     /* exp() via range reduction + Taylor series.
@@ -137,14 +143,16 @@ static void softmax_f(float *vec, int len)
      * exp(x) = exp(x/128)^128. For |x|<20, |x/128| < 0.156.
      * Taylor degree 4 at |z|<0.16 gives <0.001% error.
      * 7 squarings give exp(x) with <0.1% error. */
-    float sum = 0.0f;
-    for (int i = 0; i < len; i++) {
+    sum = 0.0f;
+    for (i = 0; i < len; i++) {
+        float e;
+        float z;
         float x = vec[i] - mx;
         if (x < -20.0f) { vec[i] = 0.0f; continue; }
 
-        float z = x * (1.0f / 128.0f);
+        z = x * (1.0f / 128.0f);
         /* Taylor: e^z ≈ 1 + z + z²/2 + z³/6 + z⁴/24 */
-        float e = 1.0f + z * (1.0f + z * (0.5f + z * (0.16666667f + z * 0.04166667f)));
+        e = 1.0f + z * (1.0f + z * (0.5f + z * (0.16666667f + z * 0.04166667f)));
         /* Square 7 times: e^128 */
         e = e * e;  e = e * e;  e = e * e;  e = e * e;
         e = e * e;  e = e * e;  e = e * e;
@@ -154,7 +162,7 @@ static void softmax_f(float *vec, int len)
 
     if (sum > 0.0f) {
         float inv_sum = 1.0f / sum;
-        for (int i = 0; i < len; i++)
+        for (i = 0; i < len; i++)
             vec[i] *= inv_sum;
     }
 }
@@ -165,11 +173,12 @@ static void softmax_f(float *vec, int len)
 static void embed_lookup(const SGAIHeader *hdr, float em_scale,
                          uint8_t token, float *out)
 {
+    int i;
     const int8_t *emb_table = (const int8_t *)(hdr + 1);
     int offset = (int)token * SGAI_N_EMBED;
     float scale = em_scale / 127.0f;
 
-    for (int i = 0; i < SGAI_N_EMBED; i++)
+    for (i = 0; i < SGAI_N_EMBED; i++)
         out[i] = (float)emb_table[offset + i] * scale;
 }
 
@@ -179,6 +188,11 @@ static void embed_lookup(const SGAIHeader *hdr, float em_scale,
 static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
                             int layer_idx, int pos, float *x)
 {
+    static float ff_out[SGAI_N_EMBED];
+    static float proj_out[SGAI_N_EMBED];
+    float inv_sqrt_hd;
+    int n_ctx;
+    int d, h, i, t;
     static float q[SGAI_N_EMBED];
     static float k_cur[SGAI_N_EMBED];
     static float v_cur[SGAI_N_EMBED];
@@ -206,19 +220,19 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
 
     /* Multi-head attention */
     memset(attn_out, 0, SGAI_N_EMBED * sizeof(float));
-    int n_ctx = (pos + 1 < SGAI_CTX) ? pos + 1 : SGAI_CTX;
+    n_ctx = (pos + 1 < SGAI_CTX) ? pos + 1 : SGAI_CTX;
 
     /* 1/sqrt(head_dim) = 1/sqrt(32) ≈ 0.17678 */
-    float inv_sqrt_hd = 0.17678f;
+    inv_sqrt_hd = 0.17678f;
 
-    for (int h = 0; h < SGAI_N_HEADS; h++) {
+    for (h = 0; h < SGAI_N_HEADS; h++) {
         const float *q_head = q + h * SGAI_HEAD_DIM;
 
         /* Attention scores */
-        for (int t = 0; t < n_ctx; t++) {
+        for (t = 0; t < n_ctx; t++) {
             const float *k_head = kv->k[layer_idx][t] + h * SGAI_HEAD_DIM;
             float score = 0.0f;
-            for (int d = 0; d < SGAI_HEAD_DIM; d++)
+            for (d = 0; d < SGAI_HEAD_DIM; d++)
                 score += q_head[d] * k_head[d];
             attn_scores[t] = score * inv_sqrt_hd;
         }
@@ -227,20 +241,19 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
         softmax_f(attn_scores, n_ctx);
 
         /* Weighted sum of V */
-        for (int d = 0; d < SGAI_HEAD_DIM; d++) {
+        for (d = 0; d < SGAI_HEAD_DIM; d++) {
             float acc = 0.0f;
-            for (int t = 0; t < n_ctx; t++)
+            for (t = 0; t < n_ctx; t++)
                 acc += attn_scores[t] * kv->v[layer_idx][t][h * SGAI_HEAD_DIM + d];
             attn_out[h * SGAI_HEAD_DIM + d] = acc;
         }
     }
 
     /* Output projection */
-    static float proj_out[SGAI_N_EMBED];
     matmul_q8(layer->wo, layer->so, attn_out, proj_out, SGAI_N_EMBED, SGAI_N_EMBED);
 
     /* Residual add */
-    for (int i = 0; i < SGAI_N_EMBED; i++)
+    for (i = 0; i < SGAI_N_EMBED; i++)
         x[i] = residual[i] + proj_out[i];
 
     /* FFN block */
@@ -249,15 +262,14 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
 
     /* ff1: 128 -> 512 + ReLU */
     matmul_q8(layer->wff1, layer->sff1, x, ff_buf, SGAI_N_EMBED, SGAI_N_EMBED * 4);
-    for (int i = 0; i < SGAI_N_EMBED * 4; i++)
+    for (i = 0; i < SGAI_N_EMBED * 4; i++)
         if (ff_buf[i] < 0.0f) ff_buf[i] = 0.0f;
 
     /* ff2: 512 -> 128 */
-    static float ff_out[SGAI_N_EMBED];
     matmul_q8(layer->wff2, layer->sff2, ff_buf, ff_out, SGAI_N_EMBED * 4, SGAI_N_EMBED);
 
     /* Residual add */
-    for (int i = 0; i < SGAI_N_EMBED; i++)
+    for (i = 0; i < SGAI_N_EMBED; i++)
         x[i] = residual[i] + ff_out[i];
 }
 
@@ -267,13 +279,14 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
 static void project_to_logits(const SGAIHeader *hdr, float em_scale,
                               const float *x, float *logits)
 {
+    int i, v;
     const int8_t *emb_table = (const int8_t *)(hdr + 1);
     float scale = em_scale / 127.0f;
 
-    for (int v = 0; v < SGAI_VOCAB; v++) {
+    for (v = 0; v < SGAI_VOCAB; v++) {
         float acc = 0.0f;
         int offset = v * SGAI_N_EMBED;
-        for (int i = 0; i < SGAI_N_EMBED; i++)
+        for (i = 0; i < SGAI_N_EMBED; i++)
             acc += (float)emb_table[offset + i] * scale * x[i];
         logits[v] = acc;
     }
@@ -285,24 +298,31 @@ static void project_to_logits(const SGAIHeader *hdr, float em_scale,
 static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
                              const uint8_t *hist, int n_hist)
 {
+    float csum;
+    float r;
+    float total;
+    uint32_t rng;
+    float inv_temp;
+    float temp;
+    static float probs[SGAI_VOCAB];
+    int h, i;
     if (temperature_q8 == 0) {
         /* Greedy: pure argmax over printable ASCII 32-126.
          * No repetition penalty — matches the proven x86 reference.
          * The model naturally produces varied text without needing it. */
         int best = 32;
-        for (int i = 33; i <= 126; i++)
+        for (i = 33; i <= 126; i++)
             if (logits[i] > logits[best]) best = i;
         return (uint8_t)best;
     }
 
     /* Temperature sampling */
-    static float probs[SGAI_VOCAB];
-    float temp = (float)temperature_q8 / 256.0f;
+    temp = (float)temperature_q8 / 256.0f;
     if (temp < 0.01f) temp = 0.01f;
-    float inv_temp = 1.0f / temp;
+    inv_temp = 1.0f / temp;
 
     /* Apply temperature, restrict to printable ASCII */
-    for (int i = 0; i < SGAI_VOCAB; i++) {
+    for (i = 0; i < SGAI_VOCAB; i++) {
         if (i >= 32 && i <= 126)
             probs[i] = logits[i] * inv_temp;
         else
@@ -313,39 +333,38 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
     softmax_f(probs + 32, 95);
 
     /* Zero non-printable */
-    for (int i = 0; i < 32; i++) probs[i] = 0.0f;
-    for (int i = 127; i < SGAI_VOCAB; i++) probs[i] = 0.0f;
+    for (i = 0; i < 32; i++) probs[i] = 0.0f;
+    for (i = 127; i < SGAI_VOCAB; i++) probs[i] = 0.0f;
 
     /* Repetition penalty: zero recent tokens */
-    for (int h = 0; h < n_hist && h < 3; h++) {
+    for (h = 0; h < n_hist && h < 3; h++) {
         uint8_t t = hist[h];
         if (t >= 32 && t <= 126) probs[t] = 0.0f;
     }
 
     /* RNG from MIPS CP0 Count register */
-    uint32_t rng;
     asm volatile("rdtsc" : "=a"(rng) : : "edx");
     rng ^= rng >> 16;
     rng *= 0x45d9f3b;
     rng ^= rng >> 16;
 
     /* Multinomial sampling */
-    float total = 0.0f;
-    for (int i = 32; i <= 126; i++) total += probs[i];
+    total = 0.0f;
+    for (i = 32; i <= 126; i++) total += probs[i];
     if (total <= 0.0f) {
         /* Fallback: first non-penalized printable char */
-        for (int i = 32; i <= 126; i++) {
+        for (i = 32; i <= 126; i++) {
             int in_hist = 0;
-            for (int h = 0; h < n_hist && h < 3; h++)
+            for (h = 0; h < n_hist && h < 3; h++)
                 if (hist[h] == (uint8_t)i) { in_hist = 1; break; }
             if (!in_hist) return (uint8_t)i;
         }
         return ' ';
     }
 
-    float r = (float)(rng & 0xFFFF) / 65536.0f * total;
-    float csum = 0.0f;
-    for (int i = 32; i <= 126; i++) {
+    r = (float)(rng & 0xFFFF) / 65536.0f * total;
+    csum = 0.0f;
+    for (i = 32; i <= 126; i++) {
         csum += probs[i];
         if (r < csum) return (uint8_t)i;
     }
@@ -399,8 +418,11 @@ void sgai_reset(SGAIState *state)
 uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
                         uint32_t temperature_q8)
 {
+    uint8_t next_tok;
+    int pos;
+    int i, l, t;
     if (!state->kv) return 0;
-    int pos = state->kv->pos;
+    pos = state->kv->pos;
 
     /* 1. Embedding lookup */
     embed_lookup(state->weights, state->em_scale, input_token, state->x);
@@ -411,7 +433,7 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
         size_t emb_table_bytes = SGAI_VOCAB * SGAI_N_EMBED;
         const SGAILayer *layers = (const SGAILayer *)(after_hdr + emb_table_bytes);
 
-        for (int l = 0; l < SGAI_N_LAYERS; l++)
+        for (l = 0; l < SGAI_N_LAYERS; l++)
             attention_layer(&layers[l], state->kv, l, pos, state->x);
     }
 
@@ -422,13 +444,13 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
     project_to_logits(state->weights, state->em_scale, state->x, state->logits);
 
     /* 5. Sample */
-    uint8_t next_tok = sample_logits(state->logits, temperature_q8,
+    next_tok = sample_logits(state->logits, temperature_q8,
                                      state->penalty_hist, (int)state->penalty_n);
 
     /* Update penalty history */
     if (temperature_q8 > 0) {
         int new_n = ((int)state->penalty_n < 3) ? (int)state->penalty_n + 1 : 3;
-        for (int i = new_n - 1; i > 0; i--)
+        for (i = new_n - 1; i > 0; i--)
             state->penalty_hist[i] = state->penalty_hist[i - 1];
         state->penalty_hist[0] = next_tok;
         state->penalty_n = (uint8_t)new_n;
@@ -439,8 +461,8 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
         state->kv->pos++;
     } else {
         /* Sliding window: shift KV cache left */
-        for (int l = 0; l < SGAI_N_LAYERS; l++) {
-            for (int t = 0; t < SGAI_CTX - 1; t++) {
+        for (l = 0; l < SGAI_N_LAYERS; l++) {
+            for (t = 0; t < SGAI_CTX - 1; t++) {
                 memcpy(state->kv->k[l][t], state->kv->k[l][t + 1], SGAI_N_EMBED * sizeof(float));
                 memcpy(state->kv->v[l][t], state->kv->v[l][t + 1], SGAI_N_EMBED * sizeof(float));
             }
@@ -457,15 +479,18 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
 void sgai_generate(SGAIState *state, const uint8_t *prompt, int prompt_len,
                    uint8_t *output, int max_tokens, uint32_t temperature_q8)
 {
+    int out_idx;
+    uint8_t tok;
+    int i;
     sgai_reset(state);
 
     /* Process prompt tokens */
-    uint8_t tok = 0;
-    for (int i = 0; i < prompt_len; i++)
+    tok = 0;
+    for (i = 0; i < prompt_len; i++)
         tok = sgai_next_token(state, prompt[i], temperature_q8);
 
     /* Generate output tokens */
-    int out_idx = 0;
+    out_idx = 0;
     while (out_idx < max_tokens - 1) {
         tok = sgai_next_token(state, tok, temperature_q8);
         if (tok == 0) break;

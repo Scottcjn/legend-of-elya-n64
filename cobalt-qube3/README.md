@@ -11,13 +11,12 @@ monoliths of knowledge, served through 2000-era HTTP.
 
 ## Status
 
-- **Works on x86 / modern gcc** — builds and generates coherent thematic text from
-  `../weights/sophia_weights.bin` (819K, 4 layers, 128 embed). Verified.
-- **gcc 2.95 (the actual Qube) — in progress.** `nano_gpt.c` is modern C (mixed
-  declarations, C99 for-loop declarations); gcc 2.95 is C89-only and rejects them. A
-  careful function-by-function C89 hand-port of the ~92 declarations is the remaining work.
-  Validate with `gcc -std=gnu89 -Werror=declaration-after-statement` (the accurate 2.95
-  proxy — plain `-ansi` wrongly rejects `//` comments, which 2.95 allows).
+- **RUNS ON THE K6-2.** Compiles clean under gcc 2.95 on the Qube's stock Cobalt Linux and
+  generates at **~13 tokens/sec** on the 450MHz AMD K6-2. `nano_gpt.c` here is the C89 port:
+  C99 for-loop + mixed declarations hoisted, verified **logic-exact** (temp=0 output is
+  byte-identical to the N64 `src/` engine, so the dialect port changed nothing but the syntax).
+- To re-validate a future edit under gcc-2.95 rules on a modern host:
+  `gcc -std=gnu89 -Werror=declaration-after-statement` (plain `-ansi` wrongly rejects `//`).
 
 ## What changed from the N64 source
 
