@@ -79,10 +79,13 @@ machines share a key.
 
 ## Download
 
-The image is published on the Internet Archive:
+Release pending. The image is being finalized and will be published on the
+Internet Archive at:
 
 - Details: https://archive.org/details/cobalt-qube3-bootable-image
 - Direct: https://archive.org/download/cobalt-qube3-bootable-image/qube3-cobalt.img.xz
+
+(These links go live when the image is uploaded.)
 
 Note: the disk image is produced from a sanitized copy of a working install. The
 root password is reset to the default above, the SSH host keys are removed and
