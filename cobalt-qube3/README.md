@@ -4,6 +4,10 @@
 
 *The blue cube itself — a Sun Cobalt Qube 3.*
 
+> **Got a dead Qube 3?** A ready-to-write bootable Cobalt Linux image (SSH already
+> working) plus a full restore guide and a drop-in config file are in
+> [RESTORE.md](RESTORE.md).
+
 A port of the `src/` nano-GPT engine to run on a **Sun Cobalt Qube 3**: AMD K6-2/450,
 64MB RAM, stock Cobalt Linux (kernel 2.2.16, glibc 2.1.3, gcc 2.95.2). The 819K-parameter
 transformer that first ran on an N64 (`../src/`), now on late-90s x86 silicon.
@@ -16,11 +20,15 @@ monoliths of knowledge, served through 2000-era HTTP.
 ## Status
 
 - **RUNS ON THE K6-2.** Compiles clean under gcc 2.95 on the Qube's stock Cobalt Linux and
-  generates at **~13 tokens/sec** on the 450MHz AMD K6-2. `nano_gpt.c` here is the C89 port:
+  generates at **~12 tokens/sec** on the AMD K6-2. `nano_gpt.c` here is the C89 port:
   C99 for-loop + mixed declarations hoisted, verified **logic-exact** (temp=0 output is
   byte-identical to the N64 `src/` engine, so the dialect port changed nothing but the syntax).
 - To re-validate a future edit under gcc-2.95 rules on a modern host:
   `gcc -std=gnu89 -Werror=declaration-after-statement` (plain `-ansi` wrongly rejects `//`).
+
+Measured live on the machine (this unit's K6-2 reports 298 MHz; 64 tokens in 5.30s of CPU):
+
+![Oracle generating on the K6-2](oracle_k6_run.png)
 
 ## What changed from the N64 source
 
