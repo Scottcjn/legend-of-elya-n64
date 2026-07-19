@@ -403,9 +403,12 @@ static void check_anti_emu(uint8_t *page) {
     store_u32_be(&page[14], mn);
     store_u32_be(&page[18], mx);
 
-    // Real hardware: RDRAM config is non-zero, jitter > 0
-    // Emulators: RDRAM config may be 0, jitter often exactly 0
-    int ok = (rdram_cfg != 0 || rdram_id != 0);
+    // Real hardware: RDRAM config is non-zero AND oscillator jitter > 0.
+    // Emulators: RDRAM config may be 0, and cycle-exact cores give jitter == 0.
+    // Require both signals — otherwise the measured jitter (the actual
+    // anti-emulation drift test) never affects the verdict, and a cycle-exact
+    // emulator that populates the RDRAM registers passes this check.
+    int ok = (rdram_cfg != 0 || rdram_id != 0) && (jitter > 0);
     page[1] = ok ? 1 : 0;
 
     g_attest.check_values[4] = jitter;
