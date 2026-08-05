@@ -49,6 +49,36 @@ ifeq ($(SGAI_HOIST),1)
 CFLAGS += -DOPT_HOIST_SCALE
 endif
 
+# --- Weight format (FINDINGS F-T009/F-T011) --------------------------------
+# SGAI_BITS is the WIDEST weight blob this build will accept.  It sizes the
+# static weight buffer, so a ternary build reserves 2,031,632 B instead of
+# 6,750,224 B.  MEASURED on the real ROM under ares, 20 forward passes,
+# ctx=128, output verified token-exact against the numpy oracle in both arms:
+#   bits=8  blob 6,750,220 B   1,709,531,205 CP0   bss 7,358,860
+#   bits=2  blob 2,031,628 B     792,761,864 CP0   bss 2,640,268   -53.6 %
+# The blob in filesystem/ must be no wider than this: a "SEQ5" blob in a
+# SGAI_BITS=2 build is rejected loudly by the size guard, not silently mangled.
+#   make base SGAI_BITS=2   -> ternary build (needs a SEQ2 blob)
+SGAI_BITS ?= 8
+CFLAGS += -DSGAI_WEIGHT_BITS=$(SGAI_BITS)
+
+# --- Verification builds ----------------------------------------------------
+# SGAI_PSE=0 pins the PSE Physarum conductance at 1.0 and drops the burst
+# entropy injection, which is what n64qat/eval_qat.py models.  Only then are
+# the ROM and the numpy oracle computing the same function, so a token
+# mismatch can be attributed to the weight kernel.  OFF by default: the
+# shipping ROM keeps PSE.
+SGAI_PSE ?= 1
+ifeq ($(SGAI_PSE),0)
+CFLAGS += -DSGAI_PSE_OFF
+endif
+
+# Extra flags for one-off verification builds, e.g. EXTRA=-DBOOT_PROBE.
+# APPENDED, never assigned: `make CFLAGS=...` on the command line silently
+# discards every knob above it (that mistake produced an 8,866,956-byte bss
+# before it was caught).
+CFLAGS += $(EXTRA)
+
 all: legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64
 
 

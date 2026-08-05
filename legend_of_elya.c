@@ -1796,6 +1796,73 @@ static void game_init(void) {
             dfs_close(fd);
         }
     }
+
+#ifdef COH_PROBE
+    /* COH_PROBE — coherence/throughput probe.  Runs inside game_init() because
+     * headless ares has no GPU and dies at the first rendered frame (F39).
+     * Prints ONE LINE PER TOKEN with the CP0 cycle delta for that token, so
+     * per-token cost vs position is measured on the real target rather than
+     * modelled.  Uses the REAL game sampling path: prompt at temperature 0,
+     * output at temperature_q8 = 64, exactly as update_generating() does. */
+    {
+        static char pl[256];
+        #define ISV(s) do {                                                    \
+            const char *_s = (s);                                              \
+            uint32_t _n = (uint32_t)strlen(_s), _w = (_n + 3) & ~3u;           \
+            for (uint32_t _i = 0; _i < _w; _i += 4) {                          \
+                uint32_t _v = 0;                                               \
+                for (int _b = 0; _b < 4; _b++) {                               \
+                    uint32_t _c = (_i + _b < _n) ? (uint8_t)_s[_i + _b] : 0;   \
+                    _v |= _c << (24 - 8 * _b);                                 \
+                }                                                              \
+                *(volatile uint32_t *)(uintptr_t)(0xB3FF0020ul + _i) = _v;     \
+            }                                                                  \
+            *(volatile uint32_t *)(uintptr_t)(0xB3FF0014ul) = _n;              \
+        } while (0)
+
+        sprintf(pl, "COH rdy=%d bits=%d ctx=%d pse=%d\n", G.ai_ready, G.ai.w_bits,
+                (int)SGAI_CTX,
+#ifdef SGAI_PSE_OFF
+                0
+#else
+                1
+#endif
+                );
+        ISV(pl);
+        if (G.ai_ready) {
+            const char *p0 = COH_PROMPT;
+            int P = (int)strlen(p0);
+            static char out[COH_NGEN + 1];
+            uint32_t t0, t1, cum = 0;
+            sgai_reset(&G.ai);
+            uint8_t tok = 0;
+            for (int i = 0; i < P; i++) {
+                asm volatile("mfc0 %0, $9" : "=r"(t0));
+                tok = sgai_next_token(&G.ai, (uint8_t)p0[i], 0);
+                asm volatile("mfc0 %0, $9" : "=r"(t1));
+                cum += (t1 - t0);
+                sprintf(pl, "T pmt %3d cp0=%u cum=%u ch=%d\n", i,
+                        (unsigned)(t1 - t0), (unsigned)cum, (int)tok);
+                ISV(pl);
+            }
+            for (int i = 0; i < COH_NGEN; i++) {
+                asm volatile("mfc0 %0, $9" : "=r"(t0));
+                if (i) tok = sgai_next_token(&G.ai, tok, COH_TEMP);
+                asm volatile("mfc0 %0, $9" : "=r"(t1));
+                cum += (t1 - t0);
+                out[i] = (char)tok;
+                sprintf(pl, "T gen %3d cp0=%u cum=%u ch=%d\n", i,
+                        (unsigned)(t1 - t0), (unsigned)cum, (int)tok);
+                ISV(pl);
+            }
+            out[COH_NGEN] = 0;
+            sprintf(pl, "COH TEXT %s\n", out); ISV(pl);
+        }
+        ISV("COH_DONE\n");
+        while (1) { }
+    }
+#endif /* COH_PROBE */
+
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────

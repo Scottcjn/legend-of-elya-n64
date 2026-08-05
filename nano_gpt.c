@@ -334,8 +334,12 @@ static void embed_lookup(const SGAIHeader *hdr, float em_scale,
 
 #define PSE_PHYSARUM_REINFORCE  0.1f   /* Conductance growth rate (gentle) */
 #define PSE_PHYSARUM_DECAY      0.02f  /* Conductance decay rate (slow) */
-#define PSE_PHYSARUM_MIN        0.5f   /* Never drop below half — tiny model needs all heads */
-#define PSE_PHYSARUM_MAX        1.5f   /* Mild amplification cap */
+#ifndef PSE_PHYSARUM_MIN
+#define PSE_PHYSARUM_MIN        0.5f
+#endif   /* Never drop below half — tiny model needs all heads */
+#ifndef PSE_PHYSARUM_MAX
+#define PSE_PHYSARUM_MAX        1.5f
+#endif   /* Mild amplification cap */
 #define PSE_PHYSARUM_PRUNE      0.0f   /* DISABLED — don't skip heads on 4-head model */
 #define PSE_BURST_INTERVAL      8      /* Entropy every 8th token (gentler) */
 #define PSE_BURST_STRENGTH      0.02f  /* 2% — subtle seasoning, not a firehose */
@@ -376,9 +380,25 @@ static inline uint32_t pse_entropy(void)
     return c;
 }
 
+/* SGAI_PSE_OFF: verification builds only.
+ *
+ * The numpy oracle (n64qat/eval_qat.py) models the transformer WITHOUT the PSE
+ * router — its comment says "PSE conductance pinned to 1.0" and it has no burst
+ * entropy.  With PSE live the ROM and the oracle are not computing the same
+ * function, so a token mismatch could not be attributed to the weight kernel,
+ * which is the thing under test.  This flag pins conductance at 1.0 and drops
+ * the burst injection so the two are the same function and the ternary kernel
+ * is the only variable.  It changes NOTHING in the shipping build (undefined
+ * by default) and is not a "make the test pass" fudge: it makes the test
+ * meaningful, and both arms are reported. */
+
 /* Burst entropy injection into activation vector (before logit projection) */
 static void pse_burst_inject(float *x, int n_embed)
 {
+#if defined(SGAI_PSE_OFF) || defined(SGAI_PSE_NO_BURST)
+    (void)x; (void)n_embed;
+    return;
+#else
     pse_state.token_counter++;
     if ((pse_state.token_counter % PSE_BURST_INTERVAL) != 0)
         return;
@@ -407,36 +427,89 @@ static void pse_burst_inject(float *x, int n_embed)
          * "Only 8 of 128 dims".  At the 544-dim widths a ternary model would
          * allow it would reach under a quarter.  The `dim %= n_embed` line
          * below could never fire because 0x7F < n_embed. */
+#ifdef PSE_OLD_MASK
+        int dim = (ent >> (i & 15)) & 0x7F;
+        if (dim >= n_embed) dim = dim % n_embed;
+#else
         int dim = (int)((ent >> (i & 15)) % (uint32_t)n_embed);
+#endif
         float noise = ((ent >> (i + 16)) & 1) ? strength : -strength;
         x[dim] += noise;
         ent = ent * 1664525u + 1013904223u;  /* LCG step */
     }
+#endif /* SGAI_PSE_OFF */
 }
 
 /* Update Physarum conductances after one attention layer */
 static void pse_physarum_update(int layer_idx, const float *sharpness)
 {
+#if defined(SGAI_PSE_OFF) || defined(SGAI_PSE_NO_ROUTE)
+    (void)layer_idx; (void)sharpness;
+    return;
+#else
     float max_sharp = 0.0f;
     for (int h = 0; h < SGAI_N_HEADS; h++)
         if (sharpness[h] > max_sharp) max_sharp = sharpness[h];
     if (max_sharp < 1e-6f) return;
 
+#ifdef PSE_COND_CENTERED
+    /* FIX (candidate B): make the update a true REDISTRIBUTION.  The shipped
+     * rule compares each head's sharpness to the FIXED threshold 0.5 with a 5:1
+     * reinforce:decay asymmetry, so the sum of the deltas is almost always
+     * positive and the conductances ratchet upward without bound until they
+     * hit the +1.5 clamp.  Comparing to the MEAN with a single symmetric rate
+     * makes the deltas sum to exactly zero: heads still trade influence, but the
+     * attention branch keeps unit net gain, which is what the model was
+     * trained with. */
+    float mean_norm = 0.0f;
+    for (int h = 0; h < SGAI_N_HEADS; h++)
+        mean_norm += sharpness[h] / max_sharp;
+    mean_norm /= (float)SGAI_N_HEADS;
+#endif
     for (int h = 0; h < SGAI_N_HEADS; h++) {
         float norm = sharpness[h] / max_sharp;
         float *cond = &pse_state.conductance[layer_idx][h];
+#ifdef PSE_COND_CENTERED
+        *cond += PSE_PHYSARUM_REINFORCE * (norm - mean_norm);
+#else
         if (norm > 0.5f)
             *cond += PSE_PHYSARUM_REINFORCE * (norm - 0.5f);
         else
             *cond -= PSE_PHYSARUM_DECAY * (0.5f - norm);
+#endif
         if (*cond < PSE_PHYSARUM_MIN) *cond = PSE_PHYSARUM_MIN;
         if (*cond > PSE_PHYSARUM_MAX) *cond = PSE_PHYSARUM_MAX;
     }
+
+#ifdef PSE_COND_NORMALIZE
+    /* FIX: the router is meant to REDISTRIBUTE attention between heads, not to
+     * apply a net gain to the attention branch.  As written the update is a
+     * one-way ratchet -- the sharpest head always has norm == 1.0 so it is
+     * always reinforced, and REINFORCE (0.1) is 5x DECAY (0.02) -- so the mean
+     * conductance walks from 1.0 (the trained model) to ~1.2 and half the heads
+     * weld to the +1.5 clamp within 30 tokens.  Renormalising to mean 1.0 keeps
+     * the relative routing and removes the net drift. */
+    {
+        float sum = 0.0f;
+        for (int h = 0; h < SGAI_N_HEADS; h++)
+            sum += pse_state.conductance[layer_idx][h];
+        if (sum > 1e-6f) {
+            float inv = (float)SGAI_N_HEADS / sum;
+            for (int h = 0; h < SGAI_N_HEADS; h++)
+                pse_state.conductance[layer_idx][h] *= inv;
+        }
+    }
+#endif
+#endif /* SGAI_PSE_OFF */
 }
 
 /* Check for entropy spike = topic change → reset to exploration */
 static void pse_physarum_check_reset(const float *logits)
 {
+#if defined(SGAI_PSE_OFF) || defined(SGAI_PSE_NO_ROUTE)
+    (void)logits;
+    return;
+#else
     /* Count active candidates as entropy proxy */
     float mx = logits[32];
     for (int i = 33; i <= 126; i++)
@@ -449,13 +522,42 @@ static void pse_physarum_check_reset(const float *logits)
     float delta = ent - pse_state.entropy_ema;
     pse_state.entropy_ema = pse_state.entropy_ema * 0.9f + ent * 0.1f;
 
+#ifdef PSE_RESET_TRACE
+    extern long pse_reset_count; extern float pse_last_delta;
+    pse_last_delta = delta;
+    if (delta > 0.5f) pse_reset_count++;
+#endif
     if (delta > 0.5f) {
         /* Topic change — reset all tubes to exploration */
         for (int l = 0; l < SGAI_N_LAYERS; l++)
             for (int h = 0; h < SGAI_N_HEADS; h++)
                 pse_state.conductance[l][h] = 1.0f;
     }
+#endif /* SGAI_PSE_OFF */
 }
+
+
+#ifdef MAG_TRACE
+/* MAG_TRACE: per-token tensor magnitude / degeneracy statistics.  Host-only. */
+struct mag_stats {
+    double ff_zero, ff_n;          /* ReLU zero fraction over all layers */
+    double x_absmax, attn_absmax;  /* peak magnitudes */
+    double x_absmean, x_n;
+    long   denorm, nonfinite;      /* degenerate float counts in x */
+} mag;
+static void mag_scan(const float *v, int n)
+{
+    for (int i = 0; i < n; i++) {
+        float f = v[i]; float a = f < 0 ? -f : f;
+        if (a > mag.x_absmax) mag.x_absmax = a;
+        mag.x_absmean += a; mag.x_n += 1;
+        union { float f; unsigned int u; } b; b.f = f;
+        unsigned int e = (b.u >> 23) & 0xFF;
+        if (e == 0   && (b.u & 0x7FFFFF)) mag.denorm++;
+        if (e == 0xFF) mag.nonfinite++;
+    }
+}
+#endif
 
 /* -----------------------------------------------------------------------
  * Attention + FFN layer forward pass (float32)
@@ -622,6 +724,17 @@ static void attention_layer(const SGAILayerPtrs *L, int bits, SGAIKVCache *kv,
     matmul_pk(L->w[4], L->s[4], x, ff_buf, SGAI_N_EMBED, SGAI_N_EMBED * 4, bits);
     for (int i = 0; i < SGAI_N_EMBED * 4; i++)
         if (ff_buf[i] < 0.0f) ff_buf[i] = 0.0f;
+#ifdef MAG_TRACE
+    for (int i = 0; i < SGAI_N_EMBED * 4; i++) {
+        if (ff_buf[i] == 0.0f) mag.ff_zero += 1;
+        mag.ff_n += 1;
+    }
+    for (int i = 0; i < SGAI_N_EMBED; i++) {
+        float a = attn_out[i] < 0 ? -attn_out[i] : attn_out[i];
+        if (a > mag.attn_absmax) mag.attn_absmax = a;
+    }
+    mag_scan(x, SGAI_N_EMBED);
+#endif
 
     /* ff2: 512 -> 128 (dense — sparse column-wise was slower due to cache thrash) */
     static float ff_out[SGAI_N_EMBED];
@@ -653,6 +766,10 @@ static void project_to_logits(const SGAIHeader *hdr, float em_scale,
 /* -----------------------------------------------------------------------
  * Sampling with temperature and repetition penalty
  * ----------------------------------------------------------------------- */
+#ifdef HOST_BUILD
+static uint32_t host_rng_seed_pending = 0;
+static void host_rng_reseed(uint32_t v){ host_rng_seed_pending = v ? v : 1u; }
+#endif
 static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
                              const uint8_t *hist, int n_hist)
 {
@@ -688,15 +805,28 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
     for (int i = 127; i < SGAI_VOCAB; i++) probs[i] = 0.0f;
 
     /* Repetition penalty: zero recent tokens */
-    for (int h = 0; h < n_hist && h < 3; h++) {
+#ifndef SGAI_NO_REP_PENALTY
+#ifndef SGAI_REP_HIST
+#define SGAI_REP_HIST 3
+#endif
+    for (int h = 0; h < n_hist && h < SGAI_REP_HIST; h++) {
         uint8_t t = hist[h];
+#ifdef SGAI_REP_FACTOR
+        /* softened penalty (experiment): scale instead of hard zero */
+        if (t >= 32 && t <= 126) probs[t] *= (float)(SGAI_REP_FACTOR);
+#else
         if (t >= 32 && t <= 126) probs[t] = 0.0f;
+#endif
     }
+#else
+    (void)hist; (void)n_hist;
+#endif
 
     /* RNG from MIPS CP0 Count register */
     uint32_t rng;
 #ifdef HOST_BUILD
     static uint32_t host_rng = 0x12345678u;
+    if (host_rng_seed_pending) { host_rng = host_rng_seed_pending; host_rng_seed_pending = 0; }
     host_rng = host_rng * 1664525u + 1013904223u;
     rng = host_rng;
 #else
