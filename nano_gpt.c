@@ -92,9 +92,22 @@ static void matmul_q8(const int8_t *weights, const uint16_t *scales,
         for (int blk = 0; blk < in_dim; blk += SGAI_Q_BLOCK) {
             float scale = f16_to_float(row_s[blk / SGAI_Q_BLOCK]);
             int lim = (blk + SGAI_Q_BLOCK < in_dim) ? blk + SGAI_Q_BLOCK : in_dim;
+#ifdef OPT_HOIST_SCALE
+            /* `scale` is constant across the whole 32-weight block, so it does
+             * not belong in the inner loop: 32 mul.s become 1. GCC will not do
+             * this itself — n64.mk passes -fno-associative-math. NOTE this is a
+             * reassociation, so it is NOT guaranteed bit-identical; that has to
+             * be measured, not assumed. */
+            float blk_acc = 0.0f;
+            for (int j = blk; j < lim; j++) {
+                blk_acc += (float)row_w[j] * input[j];
+            }
+            acc += blk_acc * scale;
+#else
             for (int j = blk; j < lim; j++) {
                 acc += (float)row_w[j] * scale * input[j];
             }
+#endif
         }
         output[o] = acc;
     }
@@ -218,7 +231,16 @@ static void pse_init(void)
 static inline uint32_t pse_entropy(void)
 {
     uint32_t c;
+#ifdef BENCH_DET_PSE
+    /* Bench builds only: replace the CP0 COUNT read with a pure counter so the
+     * engine does identical work every run. See FINDINGS F4 — the shipped path
+     * makes both the token stream AND the cycle count irreproducible. */
+    static uint32_t det_c = 0x9E3779B9u;
+    det_c = det_c * 1664525u + 1013904223u;
+    c = det_c;
+#else
     asm volatile("mfc0 %0, $9" : "=r"(c));
+#endif
     c ^= c << 13;
     c ^= c >> 17;
     c ^= c << 5;

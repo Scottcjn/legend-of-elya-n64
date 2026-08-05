@@ -6,12 +6,25 @@
 #include <string.h>
 #ifndef EC_HOST_TEST
 #include <libdragon.h>
+/* PI_STATUS bits 0-1: DMA busy / IO busy.  Read directly rather than calling
+ * libdragon's dma_busy(), which is marked deprecated and would trip -Werror. */
+#define EC_PI_STATUS (*(volatile uint32_t *)0xA4600010u)
+static inline int ec_dma_busy(void) { return (EC_PI_STATUS & 3u) != 0; }
+/* PI DMA writes straight into RDRAM behind the CPU's back and libdragon does
+ * NO cache maintenance for you (verified: zero `cache` instructions in
+ * libdragon.a's dma.o).  Without this, stale VALID lines make the CPU read
+ * pre-DMA garbage, and stale DIRTY lines get evicted ON TOP of the freshly
+ * transferred weights.  Both give intermittently wrong tokens, not a crash. */
+#define ec_dcache_prep(p, n) data_cache_hit_writeback_invalidate((p), (n))
 #else
 /* host build: stub the PI DMA so the cache policy can be unit-tested */
 extern void  ec_test_dma(void *ram, unsigned long pi, unsigned long len);
 extern void  ec_test_wait(void);
+extern int   ec_test_busy(void);
 #define dma_read_async(r, p, l) ec_test_dma((r), (p), (l))
 #define dma_wait()              ec_test_wait()
+#define ec_dma_busy()           ec_test_busy()
+#define ec_dcache_prep(p, n)    ((void)(p), (void)(n))
 #endif
 
 static void ec_touch(ExpertCache *ec, uint16_t s)
@@ -46,8 +59,24 @@ static int ec_find(ExpertCache *ec, uint16_t expert)
     return -1;
 }
 
+/* Non-blocking counterpart to ec_settle().  Without this, inflight_slot is only
+ * ever cleared by an ec_acquire() of the very expert being prefetched — so in
+ * the steady streaming state (prefetch B, keep generating from A) the flag
+ * sticks forever, ec_prefetch() returns at its "don't queue behind" guard on
+ * every subsequent call, prefetching silently switches itself off, and the
+ * slot is leaked because ec_victim() skips slots marked `loading`.
+ * Must be called on every entry point, including the acquire HIT path. */
+static void ec_poll(ExpertCache *ec)
+{
+    if (ec->inflight_slot == EC_NO_EXPERT) return;
+    if (ec_dma_busy()) return;                 /* still moving; do not block */
+    ec->slot[ec->inflight_slot].loading = 0;
+    ec->inflight_slot = EC_NO_EXPERT;
+}
+
 int ec_resident(ExpertCache *ec, uint16_t expert)
 {
+    ec_poll(ec);
     int s = ec_find(ec, expert);
     return (s >= 0 && !ec->slot[s].loading);
 }
@@ -85,15 +114,20 @@ static void ec_settle(ExpertCache *ec)
     ec->inflight_slot = EC_NO_EXPERT;
 }
 
-static void ec_start_load(ExpertCache *ec, uint16_t expert, int slot)
+static void ec_start_load(ExpertCache *ec, uint16_t expert, int slot,
+                          int speculative)
 {
     /* Only one PI transfer may be outstanding; finish the previous one. */
     ec_settle(ec);
 
-    ec->slot[slot].expert  = expert;
-    ec->slot[slot].loading = 1;
+    ec->slot[slot].expert     = expert;
+    ec->slot[slot].loading    = 1;
+    ec->slot[slot].prefetched = (uint8_t)speculative;
     ec->inflight_slot      = (uint16_t)slot;
     ec_touch(ec, (uint16_t)slot);
+
+    /* Flush+invalidate the destination BEFORE the PI engine writes it. */
+    ec_dcache_prep(ec->slot[slot].mem, ec->expert_len);
 
     dma_read_async(ec->slot[slot].mem,
                    ec->rom_base + ec->expert_off[expert],
@@ -103,28 +137,36 @@ static void ec_start_load(ExpertCache *ec, uint16_t expert, int slot)
 void ec_request(ExpertCache *ec, uint16_t expert)
 {
     if (expert >= ec->n_experts) return;
+    ec_poll(ec);
     int s = ec_find(ec, expert);
     if (s >= 0) { ec_touch(ec, (uint16_t)s); return; }   /* resident or loading */
 
     int v = ec_victim(ec, EC_NO_EXPERT);
     if (v < 0) return;                                   /* all busy; try later */
-    ec_start_load(ec, expert, v);
+    ec_start_load(ec, expert, v, 0);
 }
 
 const uint8_t *ec_acquire(ExpertCache *ec, uint16_t expert)
 {
     if (expert >= ec->n_experts) return 0;
+    ec_poll(ec);
 
     int s = ec_find(ec, expert);
     if (s >= 0 && !ec->slot[s].loading) {
-        ec->hits++;
+        /* Credit the speculation that produced this slot, whether or not its
+         * DMA had already completed by the time we got here — otherwise
+         * ec_poll() would silently reclassify every successful prefetch as an
+         * ordinary hit and the stat would always read zero. */
+        if (ec->slot[s].prefetched) { ec->prefetch_hits++; ec->slot[s].prefetched = 0; }
+        else                          ec->hits++;
         ec_touch(ec, (uint16_t)s);
         return ec->slot[s].mem;
     }
     if (s >= 0) {
-        /* a prefetch was already in flight for exactly this expert —
-         * this is the case the whole design exists to produce */
+        /* a prefetch was still in flight for exactly this expert — we arrived
+         * early, so pay only the remainder of the transfer */
         ec->prefetch_hits++;
+        ec->slot[s].prefetched = 0;
         ec_settle(ec);
         ec_touch(ec, (uint16_t)s);
         return ec->slot[s].mem;
@@ -141,10 +183,11 @@ const uint8_t *ec_acquire(ExpertCache *ec, uint16_t expert)
 void ec_prefetch(ExpertCache *ec, uint16_t expert, uint16_t keep)
 {
     if (expert >= ec->n_experts || expert == keep) return;
+    ec_poll(ec);
     if (ec_find(ec, expert) >= 0) return;         /* already here/coming */
     if (ec->inflight_slot != EC_NO_EXPERT) return; /* don't queue behind */
 
     int v = ec_victim(ec, keep);
     if (v < 0) return;                            /* nothing safe to evict */
-    ec_start_load(ec, expert, v);
+    ec_start_load(ec, expert, v, 1);
 }

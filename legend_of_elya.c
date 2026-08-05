@@ -177,6 +177,10 @@ typedef struct {
     SGAIState ai;
     SGAIKVCache kv;
     int ai_ready;
+    /* Set when the weight blob was found but did not fit wbuf, so the reason
+     * the game fell back to canned dialogue is inspectable. 0 when unused. */
+    int ai_load_failed_size;
+    int ai_load_capacity;
     int prompt_idx;
     // Per-frame generation state (enables tok/s display)
     uint8_t gen_pbuf[64];   // copy of current prompt bytes
@@ -1750,6 +1754,23 @@ static void game_init(void) {
             G.ai.kv   = &G.kv;
             G.ai_ready = 1;
         } else {
+            /* The model did not fit and the game silently falls back to canned
+             * dialogue. This has bitten us once already and gave no signal at
+             * all: up to b8788d5 the blob was 868,364 bytes and loaded fine,
+             * then f11042a ("Large model, 8.4M params, Expansion Pak") raised
+             * it to 6,750,220 without growing wbuf, so this branch has been
+             * taken ever since and the transformer never ran.
+             *
+             * Growing wbuf is not the fix. Even with the Expansion Pak fitted,
+             * weights 6,750,220 + KV 2,097,156 = 8,847,376 exceeds the 8,388,608
+             * byte RDRAM ceiling by 458,768 bytes before code, stack or
+             * framebuffer. The large model has to be STREAMED, which is what
+             * src/expert_cache.c exists for and it is not yet wired to the
+             * weight path.
+             *
+             * Record why, so the failure is inspectable instead of invisible. */
+            G.ai_load_failed_size = sz;
+            G.ai_load_capacity    = (int)sizeof(wbuf);
             dfs_close(fd);
         }
     }

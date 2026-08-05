@@ -11,6 +11,7 @@ static int dma_calls = 0;
 void ec_test_dma(void *ram, unsigned long pi, unsigned long len)
 { (void)ram; (void)pi; (void)len; dma_calls++; }
 void ec_test_wait(void) { }
+int  ec_test_busy(void) { return 0; }   /* stub DMA completes instantly */
 
 #define SLOTS 3
 #define EXPERTS 4

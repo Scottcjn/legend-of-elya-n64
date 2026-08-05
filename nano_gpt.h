@@ -14,7 +14,9 @@
 #define SGAI_N_HEADS    8
 #define SGAI_HEAD_DIM   (SGAI_N_EMBED / SGAI_N_HEADS)  // 32
 #define SGAI_VOCAB      256
+#ifndef SGAI_CTX
 #define SGAI_CTX        128
+#endif
 #define SGAI_Q_BLOCK    32  // weight quantization block size
 
 // Weight layout for one attention layer (Q8: int8 weights, float16 scales)

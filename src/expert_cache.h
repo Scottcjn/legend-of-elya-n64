@@ -21,6 +21,7 @@ typedef struct {
     uint16_t  expert;           /* which expert lives here, or NONE  */
     uint32_t  last_used;        /* LRU stamp                          */
     uint8_t   loading;          /* an async DMA is in flight          */
+    uint8_t   prefetched;       /* filled speculatively, not yet used  */
 } EcSlot;
 
 typedef struct {
