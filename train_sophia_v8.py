@@ -498,6 +498,70 @@ class CharDataset:
         return xb, yb
 
 
+# ---------------------------------------------------------------------------
+# Quantization-aware training (QAT)
+#
+# WHY THIS EXISTS.  This model is trained in float and quantized to int8
+# afterwards.  Post-training conversion to int8 is fine (the weights barely
+# move), but post-training conversion to TERNARY destroys it — measured, with
+# the ROM's own C engine: teacher-forced top-1 agreement drops to 30-36 % and
+# free-running text degenerates to "mamamamamayayayayay" at every TWN threshold
+# from 0.5 to 0.8.  See FINDINGS T7.
+#
+# The fix is not a better threshold.  It is to put the quantizer INSIDE the
+# training loop so the network learns weights that survive it — which is what
+# the sibling Genesis MoE port does (train_elya_moe.py calls lin.quantized()
+# during training) and why ternary works there and not here.
+#
+# QuantLinear fake-quantizes the weight on every forward pass and uses a
+# straight-through estimator for the backward pass: the forward sees the
+# quantized weight, the gradient flows to the underlying float weight.  The
+# fake quantizer is written to match tools/quantize_n64.py EXACTLY, including
+# the float16 rounding of the block scale, so what is trained is what ships.
+# ---------------------------------------------------------------------------
+QAT_BITS = 0        # 0 = disabled (plain float training, the original behaviour)
+QAT_TAU = 0.7       # TWN threshold, used only when QAT_BITS == 2
+
+
+def fake_quant_weight(w: torch.Tensor, bits: int, tau: float) -> torch.Tensor:
+    """Quantize-dequantize a weight matrix, per 32 consecutive flat elements."""
+    shape = w.shape
+    flat = w.reshape(-1, Q_BLOCK)
+    if bits == 2:
+        a = flat.abs()
+        delta = tau * a.mean(dim=1, keepdim=True)
+        keep = a > delta
+        t = torch.sign(flat) * keep
+        n = keep.sum(dim=1, keepdim=True).clamp(min=1)
+        alpha = (a * keep).sum(dim=1, keepdim=True) / n
+        alpha = alpha.half().float()                      # f16 scale, as shipped
+        deq = t * alpha
+    else:
+        qmax = (1 << (bits - 1)) - 1
+        s = flat.abs().amax(dim=1, keepdim=True) / qmax
+        s = torch.where(s <= 0, torch.full_like(s, 1e-12), s)
+        s = s.half().float()                              # f16 scale, as shipped
+        q = torch.clamp(torch.round(flat / s), -qmax - 1, qmax)
+        deq = q * s
+    return deq.reshape(shape)
+
+
+class QuantLinear(nn.Linear):
+    """nn.Linear whose weight is fake-quantized on the forward pass (STE)."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = self.weight
+        if QAT_BITS:
+            wq = fake_quant_weight(w, QAT_BITS, QAT_TAU)
+            w = w + (wq - w).detach()          # straight-through estimator
+        return F.linear(x, w, self.bias)
+
+
+def linear(in_f: int, out_f: int, bias: bool = False) -> nn.Linear:
+    """Factory so enabling QAT does not require touching the model code."""
+    return QuantLinear(in_f, out_f, bias=bias)
+
+
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-8):
         super().__init__()
@@ -511,10 +575,10 @@ class CausalSelfAttention(nn.Module):
     def __init__(self):
         super().__init__()
         head_dim = N_EMBED // N_HEADS
-        self.wq = nn.Linear(N_EMBED, N_EMBED, bias=False)
-        self.wk = nn.Linear(N_EMBED, N_EMBED, bias=False)
-        self.wv = nn.Linear(N_EMBED, N_EMBED, bias=False)
-        self.wo = nn.Linear(N_EMBED, N_EMBED, bias=False)
+        self.wq = linear(N_EMBED, N_EMBED)
+        self.wk = linear(N_EMBED, N_EMBED)
+        self.wv = linear(N_EMBED, N_EMBED)
+        self.wo = linear(N_EMBED, N_EMBED)
         self.n_heads = N_HEADS
         self.head_dim = head_dim
         mask = torch.tril(torch.ones(CTX, CTX, dtype=torch.bool)).view(1, 1, CTX, CTX)
@@ -542,8 +606,8 @@ class Block(nn.Module):
         self.ln1 = RMSNorm(N_EMBED)
         self.attn = CausalSelfAttention()
         self.ln2 = RMSNorm(N_EMBED)
-        self.wff1 = nn.Linear(N_EMBED, N_EMBED * 4, bias=False)
-        self.wff2 = nn.Linear(N_EMBED * 4, N_EMBED, bias=False)
+        self.wff1 = linear(N_EMBED, N_EMBED * 4)
+        self.wff2 = linear(N_EMBED * 4, N_EMBED)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(self.ln1(x))
@@ -941,7 +1005,17 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--save-interval", type=int, default=TrainConfig.save_interval)
     parser.add_argument("--sample-tokens", type=int, default=TrainConfig.sample_tokens)
     parser.add_argument("--seed", type=int, default=TrainConfig.seed)
+    parser.add_argument("--qat-bits", type=int, default=0,
+                        help="Quantization-aware training width (2=ternary, 3..8=int-N). "
+                             "0 disables QAT and trains in float, as before.")
+    parser.add_argument("--qat-tau", type=float, default=0.7,
+                        help="TWN threshold multiplier, used when --qat-bits 2.")
     args = parser.parse_args()
+    global QAT_BITS, QAT_TAU
+    QAT_BITS, QAT_TAU = args.qat_bits, args.qat_tau
+    if QAT_BITS:
+        print(f"QAT enabled: {QAT_BITS}-bit fake quantization in the training loop"
+              + (f" (TWN tau={QAT_TAU})" if QAT_BITS == 2 else ""))
     return TrainConfig(
         steps=args.steps,
         batch_size=args.batch_size,

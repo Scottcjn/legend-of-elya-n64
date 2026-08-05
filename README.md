@@ -219,7 +219,7 @@ The goal is to shrink, optimize, and package this into a **reusable SDK** that a
   ```
 - [x] **Multiple NPC support** — Expansion Pak multi-NPC mode, 3 AI characters (`multi_npc.c`)
 - [x] **Weight format tools** — Python training pipeline for custom NPC personalities (`train_sophia_v8.py`)
-- [x] **Expansion Pak support** — 8MB mode working: 8.4M-param Large model with two-phase training, multi-NPC mode
+- [x] **Expansion Pak support** — 8MB mode working: 6.36M-param Large model with two-phase training, multi-NPC mode
 - [ ] **Example ROMs** — tavern scene with 3 NPCs, shop with merchant, quest giver
 
 ### Phase 5: Advanced Features
@@ -237,7 +237,7 @@ The goal is to shrink, optimize, and package this into a **reusable SDK** that a
 | Tiny | 2 | 64 | ~100K | ~60KB | ~70KB | Simple responses, many NPCs |
 | Small | 4 | 128 | 819K | 458KB | 263KB | Current — single NPC dialog |
 | Medium | 6 | 192 | ~2.8M | ~1.5MB | 600KB | Rich dialog, Expansion Pak |
-| Large | 8 | 256 | ~8.4M | ~4.2MB | 1.6MB | Implemented — Expansion Pak, two-phase training |
+| Large | 8 | 256 | 6.36M | ~4.2MB | 1.6MB | Implemented — Expansion Pak, two-phase training |
 
 ---
 

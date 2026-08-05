@@ -22,6 +22,33 @@ else
 include $(N64_INST)/n64.mk
 endif
 
+# --- Model residency knobs (FINDINGS T8/T9) --------------------------------
+# The float32 KV cache is 2,097,156 B. Weights 6,750,220 + that = 8,847,376,
+# which is 458,768 B over the 8,388,608 B an Expansion Pak console has, so the
+# shipped ROM's weight load is guarded off and the transformer never runs.
+# An int8 KV cache is 589,828 B and brings the total to 7,340,048 B, which
+# fits, with the weights left exactly as they are.
+#   make base SGAI_KV=float32   -> old behaviour (does not fit)
+SGAI_KV ?= int8
+ifeq ($(SGAI_KV),int8)
+CFLAGS += -DSGAI_KV_INT8
+endif
+
+# matmul_q8's block scale is constant across each 32-weight block, so it does
+# not belong in the inner loop: 32 mul.s become 1. GCC will not do it itself —
+# n64.mk passes -fno-associative-math, and it IS a reassociation.
+# Measured on the REAL ROM under ares, 16 tokens, output byte-identical:
+#   base  1,674,524,492 CP0 counts     hoist 1,438,601,627     -14.09 %
+# (mupen64plus reported only -7.47 % for the same change because it prices
+#  memory access at zero; ares models it. Static instruction counting of the
+#  function said it got BIGGER, 110 -> 114 instructions, and would have
+#  rejected it.)
+#   make base SGAI_HOIST=0   -> the un-hoisted inner loop
+SGAI_HOIST ?= 1
+ifeq ($(SGAI_HOIST),1)
+CFLAGS += -DOPT_HOIST_SCALE
+endif
+
 all: legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64
 
 

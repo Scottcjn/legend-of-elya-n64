@@ -41,8 +41,13 @@ static inline uint32_t swap32(uint32_t x) {
  * ----------------------------------------------------------------------- */
 static float f16_to_float(uint16_t f16)
 {
-    /* Byte-swap: file is LE, N64 is BE */
+#ifndef HOST_BUILD
+    /* Byte-swap: file is LE, N64 is BE.
+     * HOST_BUILD compiles this file natively on a little-endian x86 host as a
+     * bit-accurate reference (tools/host_eval.c); there the file's LE half is
+     * already in the right order and swapping would corrupt every scale. */
     f16 = (uint16_t)((f16 >> 8) | (f16 << 8));
+#endif
 
     uint32_t sign = (f16 >> 15) & 1;
     uint32_t exp  = (f16 >> 10) & 0x1F;
@@ -113,6 +118,130 @@ static void matmul_q8(const int8_t *weights, const uint16_t *scales,
     }
 }
 #endif /* USE_RSP_MATMUL */
+
+/* -----------------------------------------------------------------------
+ * Bit-packed weight matmuls ("SEQn" blobs)
+ *
+ * Weights are a big-endian bit stream, MSB first, `bits` bits per weight, in
+ * the same flat row-major order as the int8 array they replace.  A
+ * quantization block is 32 weights, so it is always exactly 4*bits bytes and
+ * never straddles a byte the next block needs.
+ *
+ * The block scale multiplies ONCE per 32 weights, never inside the inner loop
+ * — the same hoist that measured -7.47 % instructions for the Q8 path
+ * (OPT_HOIST_SCALE / FINDINGS F26-F27 in the previous session).
+ * ----------------------------------------------------------------------- */
+
+/* Ternary specialisation: codes 00 -> 0, 01 -> +1, 11 -> -1 (10 is never
+ * emitted by the quantizer and is treated as -1).  No multiply at all in the
+ * inner loop: the op is skip / acc += x / acc -= x. */
+static void matmul_t2(const uint8_t *w, const uint16_t *scales,
+                      const float *input, float *output,
+                      int in_dim, int out_dim)
+{
+    const int row_bytes = in_dim >> 2;
+    const int nblk      = in_dim / SGAI_Q_BLOCK;
+
+    for (int o = 0; o < out_dim; o++) {
+        const uint8_t  *p     = w      + (size_t)o * row_bytes;
+        const uint16_t *row_s = scales + (size_t)o * nblk;
+        const float    *xi    = input;
+        float acc = 0.0f;
+
+        for (int b = 0; b < nblk; b++) {
+            float blk = 0.0f;
+            for (int g = 0; g < SGAI_Q_BLOCK / 4; g++) {
+                uint32_t byte = *p++;
+                uint32_t c;
+                c = (byte >> 6) & 3u; if (c) { if (c == 1u) blk += xi[0]; else blk -= xi[0]; }
+                c = (byte >> 4) & 3u; if (c) { if (c == 1u) blk += xi[1]; else blk -= xi[1]; }
+                c = (byte >> 2) & 3u; if (c) { if (c == 1u) blk += xi[2]; else blk -= xi[2]; }
+                c =  byte       & 3u; if (c) { if (c == 1u) blk += xi[3]; else blk -= xi[3]; }
+                xi += 4;
+            }
+            acc += blk * f16_to_float(row_s[b]);
+        }
+        output[o] = acc;
+    }
+}
+
+/* Generic width 3..6 (and 7, though the quantizer never emits it).
+ * A sliding 32-bit window holds at most 13 bits, so no refill can overflow. */
+static void matmul_qn(const uint8_t *w, const uint16_t *scales,
+                      const float *input, float *output,
+                      int in_dim, int out_dim, int bits)
+{
+    const int row_bytes = (in_dim * bits) >> 3;
+    const int nblk      = in_dim / SGAI_Q_BLOCK;
+    const int shift     = 8 - bits;              /* sign-extend via int8_t */
+    const uint32_t mask = (1u << bits) - 1u;
+
+    for (int o = 0; o < out_dim; o++) {
+        const uint8_t  *p     = w      + (size_t)o * row_bytes;
+        const uint16_t *row_s = scales + (size_t)o * nblk;
+        const float    *xi    = input;
+        float acc = 0.0f;
+
+        for (int b = 0; b < nblk; b++) {
+            uint32_t bitbuf = 0;
+            int nbits = 0;
+            float blk = 0.0f;
+            for (int j = 0; j < SGAI_Q_BLOCK; j++) {
+                while (nbits < bits) { bitbuf = (bitbuf << 8) | *p++; nbits += 8; }
+                nbits -= bits;
+                uint32_t code = (bitbuf >> nbits) & mask;
+                int v = (int)((int8_t)(code << shift)) >> shift;
+                blk += (float)v * xi[j];
+            }
+            acc += blk * f16_to_float(row_s[b]);
+            xi += SGAI_Q_BLOCK;
+        }
+        output[o] = acc;
+    }
+}
+
+/* Dispatch on the blob's declared bit width.  bits == 8 falls straight through
+ * to the existing matmul_q8 (which is the RSP path when USE_RSP_MATMUL is set),
+ * so an 8-bit blob computes bit-identically to before this change. */
+#ifdef OPT_INLINE_DISPATCH
+__attribute__((always_inline))
+static inline
+#else
+static
+#endif
+void matmul_pk(const uint8_t *w, const uint16_t *scales,
+                      const float *input, float *output,
+                      int in_dim, int out_dim, int bits)
+{
+    if (bits == 8)
+        matmul_q8((const int8_t *)w, scales, input, output, in_dim, out_dim);
+    else if (bits == 2)
+        matmul_t2(w, scales, input, output, in_dim, out_dim);
+    else
+        matmul_qn(w, scales, input, output, in_dim, out_dim, bits);
+}
+
+/* Resolve one layer's six tensors inside a bit-packed blob. */
+static void sgai_layer_ptrs(const SGAIState *st, int li, SGAILayerPtrs *out)
+{
+    static const int elems[SGAI_N_TENSORS] = {
+        SGAI_ATTN_ELEMS, SGAI_ATTN_ELEMS, SGAI_ATTN_ELEMS,
+        SGAI_ATTN_ELEMS, SGAI_FF_ELEMS,   SGAI_FF_ELEMS
+    };
+    const int bits = st->w_bits;
+    const uint8_t *base = (const uint8_t *)(st->weights + 1)
+                        + (size_t)SGAI_VOCAB * SGAI_N_EMBED;
+    const size_t wbytes = (size_t)SGAI_LAYER_ELEMS * (size_t)bits / 8u;
+    const uint8_t *p  = base + (size_t)li * (wbytes + SGAI_LAYER_SCALE_BYTES);
+    const uint8_t *sp = p + wbytes;
+
+    for (int i = 0; i < SGAI_N_TENSORS; i++) {
+        out->w[i] = p;
+        p += (size_t)elems[i] * (size_t)bits / 8u;
+        out->s[i] = (const uint16_t *)(const void *)sp;
+        sp += ((size_t)elems[i] / SGAI_Q_BLOCK) * 2u;
+    }
+}
 
 /* -----------------------------------------------------------------------
  * RMS normalization (no learned parameters)
@@ -271,8 +400,14 @@ static void pse_burst_inject(float *x, int n_embed)
 
     float strength = rms * PSE_BURST_STRENGTH;
     for (int i = 0; i < PSE_BURST_DIMS; i++) {
-        int dim = (ent >> (i & 15)) & 0x7F;
-        if (dim >= n_embed) dim = dim % n_embed;
+        /* BUG FIX (live in the shipped model): this was `& 0x7F`, which masks
+         * the target dimension to 0..127.  The model has been 256-dim since
+         * f11042a, so entropy could only ever reach the FIRST HALF of the
+         * activation vector — and the comment on PSE_BURST_DIMS still says
+         * "Only 8 of 128 dims".  At the 544-dim widths a ternary model would
+         * allow it would reach under a quarter.  The `dim %= n_embed` line
+         * below could never fire because 0x7F < n_embed. */
+        int dim = (int)((ent >> (i & 15)) % (uint32_t)n_embed);
         float noise = ((ent >> (i + 16)) & 1) ? strength : -strength;
         x[dim] += noise;
         ent = ent * 1664525u + 1013904223u;  /* LCG step */
@@ -326,7 +461,48 @@ static void pse_physarum_check_reset(const float *logits)
  * Attention + FFN layer forward pass (float32)
  * With PSE: Physarum head routing + sparse FFN + weight skip
  * ----------------------------------------------------------------------- */
-static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
+#ifdef SGAI_KV_INT8
+/* Quantize one K and one V vector into the int8 cache, per head.
+ * s = max|x| / 127 over the head's 32 dims; a head that is entirely zero gets
+ * scale 0 and stores zeros, which dequantizes back to exactly zero. */
+static void kv_store_q8(SGAIKVCache *kv, int layer_idx, int pos,
+                        const float *k_cur, const float *v_cur)
+{
+    const int span = SGAI_N_EMBED / SGAI_KV_NSCALE;   /* 32 per head, or 256 */
+    for (int h = 0; h < SGAI_KV_NSCALE; h++) {
+        const int base = h * span;
+        float kmax = 0.0f, vmax = 0.0f;
+        for (int d = 0; d < span; d++) {
+            float a = k_cur[base + d]; if (a < 0.0f) a = -a; if (a > kmax) kmax = a;
+            float b = v_cur[base + d]; if (b < 0.0f) b = -b; if (b > vmax) vmax = b;
+        }
+        float ks = kmax * (1.0f / 127.0f);
+        float vs = vmax * (1.0f / 127.0f);
+        float kinv = (ks > 0.0f) ? (127.0f / kmax) : 0.0f;
+        float vinv = (vs > 0.0f) ? (127.0f / vmax) : 0.0f;
+        kv->ks[layer_idx][pos][h] = ks;
+        kv->vs[layer_idx][pos][h] = vs;
+        for (int d = 0; d < span; d++) {
+            /* round-to-nearest without a float->int cast helper: the R4300i
+             * path in this file deliberately avoids trunc.w.s, but a plain
+             * (int) cast on a value already clamped to +-127.5 is safe. */
+            float kq = k_cur[base + d] * kinv;
+            float vq = v_cur[base + d] * vinv;
+            kq += (kq >= 0.0f) ? 0.5f : -0.5f;
+            vq += (vq >= 0.0f) ? 0.5f : -0.5f;
+            int ki = (int)kq, vi = (int)vq;
+            if (ki >  127) ki =  127;
+            if (ki < -127) ki = -127;
+            if (vi >  127) vi =  127;
+            if (vi < -127) vi = -127;
+            kv->k[layer_idx][pos][base + d] = (int8_t)ki;
+            kv->v[layer_idx][pos][base + d] = (int8_t)vi;
+        }
+    }
+}
+#endif /* SGAI_KV_INT8 */
+
+static void attention_layer(const SGAILayerPtrs *L, int bits, SGAIKVCache *kv,
                             int layer_idx, int pos, float *x)
 {
     static float q[SGAI_N_EMBED];
@@ -345,20 +521,24 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
     rms_norm(x, SGAI_N_EMBED);
 
     /* Q, K, V projections */
-    matmul_q8(layer->wq, layer->sq, x, q,     SGAI_N_EMBED, SGAI_N_EMBED);
-    matmul_q8(layer->wk, layer->sk, x, k_cur, SGAI_N_EMBED, SGAI_N_EMBED);
-    matmul_q8(layer->wv, layer->sv, x, v_cur, SGAI_N_EMBED, SGAI_N_EMBED);
+    matmul_pk(L->w[0], L->s[0], x, q,     SGAI_N_EMBED, SGAI_N_EMBED, bits);
+    matmul_pk(L->w[1], L->s[1], x, k_cur, SGAI_N_EMBED, SGAI_N_EMBED, bits);
+    matmul_pk(L->w[2], L->s[2], x, v_cur, SGAI_N_EMBED, SGAI_N_EMBED, bits);
 
     /* Store K, V in cache */
     if (pos < SGAI_CTX) {
+#ifdef SGAI_KV_INT8
+        kv_store_q8(kv, layer_idx, pos, k_cur, v_cur);
+#else
         memcpy(kv->k[layer_idx][pos], k_cur, SGAI_N_EMBED * sizeof(float));
         memcpy(kv->v[layer_idx][pos], v_cur, SGAI_N_EMBED * sizeof(float));
+#endif
     }
 
     /* Multi-head attention with PSE Physarum routing */
     memset(attn_out, 0, SGAI_N_EMBED * sizeof(float));
     int n_ctx = (pos + 1 < SGAI_CTX) ? pos + 1 : SGAI_CTX;
-    float inv_sqrt_hd = 0.17678f;
+    const float inv_sqrt_hd = SGAI_INV_SQRT_HEAD_DIM;
 
     for (int h = 0; h < SGAI_N_HEADS; h++) {
         float cond = pse_state.conductance[layer_idx][h];
@@ -376,10 +556,20 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
         float sum_score = 0.0f;
 
         for (int t = 0; t < n_ctx; t++) {
+#ifdef SGAI_KV_INT8
+            /* One dequant scale per (layer, t, head): hoisted out of the dot
+             * product entirely, exactly like the Q8 block scale. */
+            const int8_t *k_head = kv->k[layer_idx][t] + h * SGAI_HEAD_DIM;
+            float score = 0.0f;
+            for (int d = 0; d < SGAI_HEAD_DIM; d++)
+                score += q_head[d] * (float)k_head[d];
+            score *= kv->ks[layer_idx][t][h / (SGAI_N_HEADS / SGAI_KV_NSCALE)];
+#else
             const float *k_head = kv->k[layer_idx][t] + h * SGAI_HEAD_DIM;
             float score = 0.0f;
             for (int d = 0; d < SGAI_HEAD_DIM; d++)
                 score += q_head[d] * k_head[d];
+#endif
             attn_scores[t] = score * inv_sqrt_hd;
             if (attn_scores[t] > max_score) max_score = attn_scores[t];
             sum_score += attn_scores[t];
@@ -391,12 +581,26 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
         softmax_f(attn_scores, n_ctx);
 
         /* V-weighted-sum scaled by Physarum tube conductance */
+#ifdef SGAI_KV_INT8
+        /* Fold the per-(t,head) V dequant scale into the attention weight once,
+         * instead of once per (t,d).  32 multiplies become 1 per timestep. */
+        static float vw[SGAI_CTX];
+        for (int t = 0; t < n_ctx; t++)
+            vw[t] = attn_scores[t] * kv->vs[layer_idx][t][h / (SGAI_N_HEADS / SGAI_KV_NSCALE)];
+        for (int d = 0; d < SGAI_HEAD_DIM; d++) {
+            float acc = 0.0f;
+            for (int t = 0; t < n_ctx; t++)
+                acc += vw[t] * (float)kv->v[layer_idx][t][h * SGAI_HEAD_DIM + d];
+            attn_out[h * SGAI_HEAD_DIM + d] = acc * cond;  /* Hebbian amplify */
+        }
+#else
         for (int d = 0; d < SGAI_HEAD_DIM; d++) {
             float acc = 0.0f;
             for (int t = 0; t < n_ctx; t++)
                 acc += attn_scores[t] * kv->v[layer_idx][t][h * SGAI_HEAD_DIM + d];
             attn_out[h * SGAI_HEAD_DIM + d] = acc * cond;  /* Hebbian amplify */
         }
+#endif
     }
 
     /* Update Physarum conductances */
@@ -404,7 +608,7 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
 
     /* Output projection */
     static float proj_out[SGAI_N_EMBED];
-    matmul_q8(layer->wo, layer->so, attn_out, proj_out, SGAI_N_EMBED, SGAI_N_EMBED);
+    matmul_pk(L->w[3], L->s[3], attn_out, proj_out, SGAI_N_EMBED, SGAI_N_EMBED, bits);
 
     /* Residual add */
     for (int i = 0; i < SGAI_N_EMBED; i++)
@@ -415,13 +619,13 @@ static void attention_layer(const SGAILayer *layer, SGAIKVCache *kv,
     rms_norm(x, SGAI_N_EMBED);
 
     /* ff1: 128 -> 512 + ReLU */
-    matmul_q8(layer->wff1, layer->sff1, x, ff_buf, SGAI_N_EMBED, SGAI_N_EMBED * 4);
+    matmul_pk(L->w[4], L->s[4], x, ff_buf, SGAI_N_EMBED, SGAI_N_EMBED * 4, bits);
     for (int i = 0; i < SGAI_N_EMBED * 4; i++)
         if (ff_buf[i] < 0.0f) ff_buf[i] = 0.0f;
 
     /* ff2: 512 -> 128 (dense — sparse column-wise was slower due to cache thrash) */
     static float ff_out[SGAI_N_EMBED];
-    matmul_q8(layer->wff2, layer->sff2, ff_buf, ff_out, SGAI_N_EMBED * 4, SGAI_N_EMBED);
+    matmul_pk(L->w[5], L->s[5], ff_buf, ff_out, SGAI_N_EMBED * 4, SGAI_N_EMBED, bits);
 
     /* Residual add */
     for (int i = 0; i < SGAI_N_EMBED; i++)
@@ -491,7 +695,13 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
 
     /* RNG from MIPS CP0 Count register */
     uint32_t rng;
+#ifdef HOST_BUILD
+    static uint32_t host_rng = 0x12345678u;
+    host_rng = host_rng * 1664525u + 1013904223u;
+    rng = host_rng;
+#else
     asm volatile("mfc0 %0, $9" : "=r"(rng));
+#endif
     rng ^= rng >> 16;
     rng *= 0x45d9f3b;
     rng ^= rng >> 16;
@@ -529,9 +739,24 @@ void sgai_init(SGAIState *state, const void *rom_weights)
 
     if (rom_weights != NULL) {
         const SGAIHeader *hdr = (const SGAIHeader *)rom_weights;
-        /* Weight file is written LE by Python. On BE N64, magic reads byte-swapped. */
-        uint32_t magic_raw = hdr->magic;
-        if (magic_raw == SGAI_MAGIC || magic_raw == swap32(SGAI_MAGIC)) {
+        /* The magic is four ASCII bytes ("SEAI" or "SEQn"), so read it a byte
+         * at a time into a big-endian word.  That is endian-independent and
+         * needs no swap heuristics — the old code's `magic == swap32(magic)`
+         * dance only worked because "SEAI" happens not to collide with its own
+         * byte-reversal, which "SEQn" does not guarantee. */
+        const uint8_t *mb = (const uint8_t *)rom_weights;
+        uint32_t magic_be = ((uint32_t)mb[0] << 24) | ((uint32_t)mb[1] << 16)
+                          | ((uint32_t)mb[2] << 8)  |  (uint32_t)mb[3];
+        int bits = 0;
+        if (magic_be == SGAI_MAGIC) {
+            bits = 8;                                   /* shipped int8 blob */
+        } else if ((magic_be & 0xFFFFFF00u) == (uint32_t)(SGAI_MAGIC_SEQ0 & 0xFFFFFF00u)) {
+            int n = (int)(magic_be - SGAI_MAGIC_SEQ0);  /* ASCII digit - '0' */
+            if (n >= SGAI_MIN_BITS && n <= SGAI_MAX_BITS)
+                bits = n;
+        }
+        if (bits) {
+            state->w_bits = bits;
             state->weights = hdr;
             state->is_loaded = 1;
             /* em_scale_x16 is uint8_t — no byte swap needed */
@@ -589,12 +814,11 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
 
     /* 2. Run transformer layers */
     if (state->is_loaded && state->weights != NULL) {
-        const uint8_t *after_hdr = (const uint8_t *)(state->weights + 1);
-        size_t emb_table_bytes = SGAI_VOCAB * SGAI_N_EMBED;
-        const SGAILayer *layers = (const SGAILayer *)(after_hdr + emb_table_bytes);
-
-        for (int l = 0; l < SGAI_N_LAYERS; l++)
-            attention_layer(&layers[l], state->kv, l, pos, state->x);
+        SGAILayerPtrs lp;
+        for (int l = 0; l < SGAI_N_LAYERS; l++) {
+            sgai_layer_ptrs(state, l, &lp);
+            attention_layer(&lp, state->w_bits, state->kv, l, pos, state->x);
+        }
     }
 
     /* 3. Final layer norm */
@@ -629,8 +853,16 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
         /* Sliding window: shift KV cache left */
         for (int l = 0; l < SGAI_N_LAYERS; l++) {
             for (int t = 0; t < SGAI_CTX - 1; t++) {
-                memcpy(state->kv->k[l][t], state->kv->k[l][t + 1], SGAI_N_EMBED * sizeof(float));
-                memcpy(state->kv->v[l][t], state->kv->v[l][t + 1], SGAI_N_EMBED * sizeof(float));
+                memcpy(state->kv->k[l][t], state->kv->k[l][t + 1],
+                       SGAI_N_EMBED * sizeof(state->kv->k[0][0][0]));
+                memcpy(state->kv->v[l][t], state->kv->v[l][t + 1],
+                       SGAI_N_EMBED * sizeof(state->kv->v[0][0][0]));
+#ifdef SGAI_KV_INT8
+                memcpy(state->kv->ks[l][t], state->kv->ks[l][t + 1],
+                       SGAI_KV_NSCALE * sizeof(float));
+                memcpy(state->kv->vs[l][t], state->kv->vs[l][t + 1],
+                       SGAI_KV_NSCALE * sizeof(float));
+#endif
             }
         }
     }

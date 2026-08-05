@@ -1251,7 +1251,17 @@ static void draw_text(surface_t *disp) {
             graphics_draw_text(disp,  84, 118, "[Sophia AI: LOADED]");
         else if (G.ai_ready)
             graphics_draw_text(disp,  64, 118, "[AI: file ok, magic?]");
-        else
+        else if (G.ai_load_failed_size > 0) {
+            /* Make the failure LOUD.  This branch was silent for months: the
+             * weight blob grew past a hardcoded buffer and the game just fell
+             * back to canned dialogue with no way to tell from the screen.
+             * Print the two numbers that explain it. */
+            char why[40];
+            graphics_draw_text(disp,  52, 118, "[Sophia AI: WEIGHTS TOO BIG]");
+            snprintf(why, sizeof(why), "blob %d B > buffer %d B",
+                     G.ai_load_failed_size, G.ai_load_capacity);
+            graphics_draw_text(disp,  44, 131, why);
+        } else
             graphics_draw_text(disp,  72, 118, "[Sophia AI: Demo Mode]");
         graphics_draw_text(disp,  80, 155, "Press START to enter");
         graphics_draw_text(disp, 104, 170, "the dungeon...");
@@ -1745,12 +1755,24 @@ static void game_init(void) {
 
     int fd = dfs_open("/sophia_weights.bin");
     if (fd >= 0) {
-        static uint8_t wbuf[3 * 1024 * 1024] __attribute__((aligned(8)));  /* 3MB for v8 Q8 6-layer 192-embed */
+        /* Sized for the model that is actually in filesystem/: 8 layers,
+         * 256 embed, int8 weights = 6,750,220 B, rounded up to an 8-byte
+         * multiple.  It used to be a hardcoded 3 MB describing a 6-layer
+         * 192-embed model that no longer exists, which is exactly how the
+         * silent fallback below came to be permanently taken. */
+        static uint8_t wbuf[SGAI_WEIGHT_BUF_BYTES] __attribute__((aligned(8)));
         int sz = dfs_size(fd);
         if (sz > 0 && sz <= (int)sizeof(wbuf)) {
             dfs_read(wbuf, 1, sz, fd);
             dfs_close(fd);
             sgai_init(&G.ai, wbuf);
+            /* sgai_init heap-allocates its own KV cache; we use the static
+             * G.kv instead, so hand the allocation back rather than leaking
+             * it. On an 8 MB machine that leak was 2 MB with the float32
+             * cache and is 589,828 B with the int8 one. */
+            if (G.ai.kv != NULL && G.ai.kv != &G.kv) {
+                free(G.ai.kv);
+            }
             G.ai.kv   = &G.kv;
             G.ai_ready = 1;
         } else {
