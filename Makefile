@@ -73,6 +73,30 @@ ifeq ($(SGAI_PSE),0)
 CFLAGS += -DSGAI_PSE_OFF
 endif
 
+# --- PSE Physarum conductance fix (docs/N64_COHERENCE_FINDINGS.md) ----------
+# `attn_out[d] = acc * cond` is an uncalibrated per-head gain. It starts at 1.0
+# (the trained model) and RATCHETS: the sharpest head always has norm == 1.0 so
+# it is always reinforced, and REINFORCE (0.1) is 5x DECAY (0.02), every token
+# of every layer. Traced on the shipped blob: 3 of 64 heads welded to the +1.5
+# clamp by token 7, 8 by token 15 -- exactly where output diverges from the
+# reference -- and 25 by token 31. `pse_physarum_check_reset` never fires
+# (0/720 tokens), so nothing undoes it inside a conversation. That is why the
+# failure is one-way: coherent early, never fully coherent again.
+#
+# Renormalising to mean 1.0 keeps the RELATIVE routing the router is for, and
+# removes the net gain the model has no learned scale to absorb. Narrowing the
+# clamp bounds the residual. Measured, bits per char, lower is better:
+#   as shipped (band +-0.50)         18.9873   diverges at token 15
+#   SGAI_PSE=0 (router off entirely) 15.4510   exact vs reference
+#   this fix  (normalize, +-0.03)    15.3730   diverges at token 56
+# So the fix beats disabling the router outright. Game-loop replay over 80 runs:
+# shipped 40/80 clean sentence terminations, this 80/80.
+# Set PSE_FIX=0 to reproduce the old shipped behaviour.
+PSE_FIX ?= 1
+ifeq ($(PSE_FIX),1)
+CFLAGS += -DPSE_COND_NORMALIZE -DPSE_PHYSARUM_MIN=0.97f -DPSE_PHYSARUM_MAX=1.03f
+endif
+
 # Extra flags for one-off verification builds, e.g. EXTRA=-DBOOT_PROBE.
 # APPENDED, never assigned: `make CFLAGS=...` on the command line silently
 # discards every knob above it (that mistake produced an 8,866,956-byte bss
@@ -101,7 +125,7 @@ $(BUILD_DIR)/nano_gpt_rsp.o: nano_gpt.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -o $@ $<
 
-$(BUILD_DIR)/matmul_rsp_drv.o: matmul_rsp_drv.c
+$(BUILD_DIR)/matmul_rsp2.o: matmul_rsp2.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) -o $@ $<
 
@@ -109,7 +133,7 @@ $(BUILD_DIR)/legend_of_elya_rsp.o: legend_of_elya.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -o $@ $<
 
-$(BUILD_DIR)/legend_of_elya_rsp.elf: $(BUILD_DIR)/legend_of_elya_rsp.o $(BUILD_DIR)/nano_gpt_rsp.o $(BUILD_DIR)/matmul_rsp_drv.o $(BUILD_DIR)/rsp_matmul.o
+$(BUILD_DIR)/legend_of_elya_rsp.elf: $(BUILD_DIR)/legend_of_elya_rsp.o $(BUILD_DIR)/nano_gpt_rsp.o $(BUILD_DIR)/matmul_rsp2.o $(BUILD_DIR)/rsp_mm2.o
 
 legend_of_elya_rsp.z64: N64_ROM_TITLE="Elya RSP"
 legend_of_elya_rsp.z64: $(BUILD_DIR)/legend_of_elya_rsp.dfs
@@ -171,6 +195,15 @@ legend_of_elya_3d.z64: N64_ROM_TITLE="Elya 3D"
 legend_of_elya_3d.z64: $(BUILD_DIR)/legend_of_elya_3d.dfs
 
 clean:
+	# libdragon's n64.mk does not make objects depend on CFLAGS, and this
+	# target used to be EMPTY. `make clean && make base EXTRA=<flags>` then
+	# rebuilt nothing and produced a byte-identical ROM, so any A/B that
+	# varied only CFLAGS silently compared a ROM against itself.
+	# Only $(BUILD_DIR): the .z64 files are TRACKED artifacts and some of
+	# them (legend_of_elya_rpc.z64) are not rebuilt by any target here, so
+	# `rm *.z64` would delete them permanently. Removing the objects and
+	# .elf is enough to force a genuine recompile.
+	rm -rf $(BUILD_DIR)
 
 # --- Reference CLI (x86/ARM host) ---
 reference: reference_cli

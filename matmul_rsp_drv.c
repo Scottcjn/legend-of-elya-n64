@@ -39,6 +39,10 @@ DEFINE_RSP_UCODE(rsp_matmul);
 
 static int rsp_available = 0;
 
+/* instrumentation: how many calls took each path */
+uint32_t rsp_mm_calls_rsp = 0;
+uint32_t rsp_mm_calls_cpu = 0;
+
 /* 8-byte aligned DMA buffers */
 static int16_t input_i16[128] __attribute__((aligned(8)));
 static int16_t weight_i16[ROWS_PER_BLOCK * 128] __attribute__((aligned(8)));
@@ -82,6 +86,7 @@ void rsp_matmul_q8(const int8_t *weights, const uint16_t *scales,
                    int in_dim, int out_dim)
 {
     if (!rsp_available || in_dim > 128 || out_dim > 512) {
+        rsp_mm_calls_cpu++;
         /* Fallback: CPU matmul (same as nano_gpt.c matmul_q8) */
         for (int o = 0; o < out_dim; o++) {
             float acc = 0.0f;
@@ -97,6 +102,8 @@ void rsp_matmul_q8(const int8_t *weights, const uint16_t *scales,
         }
         return;
     }
+
+    rsp_mm_calls_rsp++;
 
     /* Convert float32 input to int16 fixed-point */
     float max_abs = 0.0f;

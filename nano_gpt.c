@@ -49,24 +49,29 @@ static float f16_to_float(uint16_t f16)
     f16 = (uint16_t)((f16 >> 8) | (f16 << 8));
 #endif
 
-    uint32_t sign = (f16 >> 15) & 1;
-    uint32_t exp  = (f16 >> 10) & 0x1F;
-    uint32_t frac = f16 & 0x3FF;
-    float val;
+    uint32_t sign = (uint32_t)(f16 & 0x8000u) << 16;
+    uint32_t exp  = (uint32_t)(f16 >> 10) & 0x1Fu;
+    uint32_t frac = (uint32_t)f16 & 0x3FFu;
+    union { float f; uint32_t i; } u;
 
-    if (exp == 0) {
-        val = (frac / 1024.0f) * (1.0f / 16384.0f);
-    } else if (exp == 31) {
-        val = 65504.0f;
-    } else {
-        float mantissa = 1.0f + frac / 1024.0f;
-        int e = (int)exp - 15;
-        if (e >= 0)
-            val = mantissa * (float)(1u << (unsigned)e);
-        else
-            val = mantissa / (float)(1u << (unsigned)(-e));
+    /* OPT: a float16 -> float32 widening is a pure bit move for every normal
+     * value, and every weight scale in these blobs is normal.  The arithmetic
+     * form below it used to have a `mantissa / (float)(1u << -e)` on the hot
+     * path -- a div.s, ~29 cycles on the VR4300 -- executed once per 32-weight
+     * block, which is 196,608 times per forward pass.  Bit-identical for
+     * normals: (1 + frac/1024) * 2^(exp-15) is exactly the float32 with
+     * exponent field exp-15+127 and mantissa frac<<13. */
+    if (exp == 0) {                       /* subnormal / zero */
+        u.f = (float)frac * (1.0f / 1024.0f) * (1.0f / 16384.0f);
+        u.i |= sign;
+        return u.f;
     }
-    return sign ? -val : val;
+    if (exp == 31) {                      /* inf/nan -> 65504.0f, as before */
+        u.i = sign | 0x477FE000u;
+        return u.f;
+    }
+    u.i = sign | ((exp + 112u) << 23) | (frac << 13);
+    return u.f;
 }
 
 /* -----------------------------------------------------------------------
@@ -76,15 +81,6 @@ static float f16_to_float(uint16_t f16)
  * W is Q8 int8 with float16 scales per 32-weight block.
  * Dequantized weight = int8_val * float16_scale
  * ----------------------------------------------------------------------- */
-#ifdef USE_RSP_MATMUL
-/* When RSP is available, use the RSP-accelerated version */
-static void matmul_q8(const int8_t *weights, const uint16_t *scales,
-                      const float *input, float *output,
-                      int in_dim, int out_dim)
-{
-    rsp_matmul_q8(weights, scales, input, output, in_dim, out_dim);
-}
-#else
 static void matmul_q8(const int8_t *weights, const uint16_t *scales,
                       const float *input, float *output,
                       int in_dim, int out_dim)
@@ -117,7 +113,6 @@ static void matmul_q8(const int8_t *weights, const uint16_t *scales,
         output[o] = acc;
     }
 }
-#endif /* USE_RSP_MATMUL */
 
 /* -----------------------------------------------------------------------
  * Bit-packed weight matmuls ("SEQn" blobs)
@@ -213,12 +208,18 @@ void matmul_pk(const uint8_t *w, const uint16_t *scales,
                       const float *input, float *output,
                       int in_dim, int out_dim, int bits)
 {
+#ifdef USE_RSP_MATMUL
+    /* Both 8-bit and 2-bit go to the RSP.  The driver falls back to an exact
+     * CPU loop for any shape it cannot tile (in_dim not a multiple of 256). */
+    rsp_matmul_pk(w, scales, input, output, in_dim, out_dim, bits);
+#else
     if (bits == 8)
         matmul_q8((const int8_t *)w, scales, input, output, in_dim, out_dim);
     else if (bits == 2)
         matmul_t2(w, scales, input, output, in_dim, out_dim);
     else
         matmul_qn(w, scales, input, output, in_dim, out_dim, bits);
+#endif
 }
 
 /* Resolve one layer's six tensors inside a bit-packed blob. */
@@ -908,11 +909,29 @@ void sgai_init(SGAIState *state, const void *rom_weights)
     pse_init();
 
 #ifdef USE_RSP_MATMUL
-    /* Initialize RSP matmul subsystem */
-    if (rsp_matmul_init()) {
-        debugf("RSP matmul initialized - SIMD acceleration active\n");
-    } else {
-        debugf("RSP matmul unavailable - using CPU fallback\n");
+    /* Initialize RSP matmul subsystem, then permute every weight tensor into
+     * the kernel's 8-blocks-per-lane order.  This is a pure byte permutation
+     * done once; after it the CPU kernels can no longer read these weights,
+     * which is why an RSP build routes every matmul to the RSP. */
+    rsp_matmul_init();
+    if (state->is_loaded) {
+        static const int t_in[SGAI_N_TENSORS] = {
+            SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED,
+            SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED * 4
+        };
+        static const int t_out[SGAI_N_TENSORS] = {
+            SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED,
+            SGAI_N_EMBED, SGAI_N_EMBED * 4, SGAI_N_EMBED
+        };
+        for (int li = 0; li < SGAI_N_LAYERS; li++) {
+            SGAILayerPtrs L;
+            sgai_layer_ptrs(state, li, &L);
+            for (int t = 0; t < SGAI_N_TENSORS; t++)
+                rsp2_permute_tensor((uint8_t *)(uintptr_t)L.w[t],
+                                    t_in[t], t_out[t], state->w_bits);
+        }
+        rsp2_weights_ready((void *)(uintptr_t)state->weights,
+                           (unsigned long)SGAI_WEIGHT_BUF_BYTES);
     }
 #endif
 }

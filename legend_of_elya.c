@@ -1797,13 +1797,20 @@ static void game_init(void) {
         }
     }
 
-#ifdef COH_PROBE
+#if defined(COH_PROBE) || defined(BOOT_PROBE)
+/* Two headless verification probes share this IS-Viewer preamble.
+ * Each body is separately gated below and only one builds at a time. */
     /* COH_PROBE — coherence/throughput probe.  Runs inside game_init() because
      * headless ares has no GPU and dies at the first rendered frame (F39).
      * Prints ONE LINE PER TOKEN with the CP0 cycle delta for that token, so
      * per-token cost vs position is measured on the real target rather than
      * modelled.  Uses the REAL game sampling path: prompt at temperature 0,
      * output at temperature_q8 = 64, exactly as update_generating() does. */
+    /* Headless verification only (FINDINGS F37/F-T012).  Runs inside
+     * game_init(), i.e. before main() ever renders a frame, because the
+     * headless ares harness has no GPU and dies at the first frame (F39).
+     * Prints over the IS-Viewer window, which accepts 32-BIT WRITES ONLY —
+     * byte stores silently drop three of every four characters. */
     {
         static char pl[256];
         #define ISV(s) do {                                                    \
@@ -1820,6 +1827,7 @@ static void game_init(void) {
             *(volatile uint32_t *)(uintptr_t)(0xB3FF0014ul) = _n;              \
         } while (0)
 
+#ifdef COH_PROBE
         sprintf(pl, "COH rdy=%d bits=%d ctx=%d pse=%d\n", G.ai_ready, G.ai.w_bits,
                 (int)SGAI_CTX,
 #ifdef SGAI_PSE_OFF
@@ -1863,6 +1871,54 @@ static void game_init(void) {
     }
 #endif /* COH_PROBE */
 
+#ifdef BOOT_PROBE
+        sprintf(pl, "BOOT rdy=%d bits=%d bufbytes=%d ctx=%d failsz=%d cap=%d\n",
+                G.ai_ready, G.ai.w_bits, (int)SGAI_WEIGHT_BUF_BYTES,
+                (int)SGAI_CTX, G.ai_load_failed_size, G.ai_load_capacity);
+        ISV(pl);
+        if (G.ai_ready) {
+            sgai_reset(&G.ai);
+#ifdef PROBE_LONG
+            const char *p = "Who are you?";
+            const int PLEN = 12, NGEN = 48;
+#else
+            const char *p = "Elya";
+            const int PLEN = 4, NGEN = 16;
+#endif
+            uint8_t tok = 0;
+            for (int i = 0; i < PLEN; i++)
+                tok = sgai_next_token(&G.ai, (uint8_t)p[i], 0);
+            static char out[64]; static char tl[420]; int tn = 0;
+            uint32_t t0, t1, total = 0;
+            for (int i = 0; i < NGEN; i++) {
+                asm volatile("mfc0 %0, $9" : "=r"(t0));
+                if (i) tok = sgai_next_token(&G.ai, tok, 0);
+                asm volatile("mfc0 %0, $9" : "=r"(t1));
+                total += (t1 - t0);
+                out[i] = (char)tok;
+                tn += sprintf(tl + tn, "%d ", (int)tok);
+            }
+            out[NGEN] = 0;
+            { int off = 0; while (off < tn) { char sav = tl[off+120]; int cut = (off+120<tn)?120:(tn-off);
+                sprintf(pl, "GAME TOKS %.*s\n", cut, tl+off); ISV(pl); (void)sav; off += cut; } }
+            sprintf(pl, "GAME TEXT %s\n", out);  ISV(pl);
+            sprintf(pl, "GAME CP0 gen16=%u\n", (unsigned)total); ISV(pl);
+        }
+#ifdef USE_RSP_MATMUL
+        { extern uint32_t rsp_mm_calls_rsp, rsp_mm_calls_cpu;
+          extern uint32_t rsp_t_stage, rsp_t_disp, rsp_t_epi;
+          extern uint32_t rsp_n_wdma, rsp_b_w, rsp_b_out;
+          sprintf(pl, "RSPPATH rsp=%u cpu=%u\n", (unsigned)rsp_mm_calls_rsp, (unsigned)rsp_mm_calls_cpu); ISV(pl);
+          sprintf(pl, "RSPPHASE stage=%u disp=%u epi=%u\n",
+                  (unsigned)rsp_t_stage, (unsigned)rsp_t_disp, (unsigned)rsp_t_epi); ISV(pl);
+          sprintf(pl, "RSPDMA wdma=%u wKiB=%u outKiB=%u\n",
+                  (unsigned)rsp_n_wdma, (unsigned)rsp_b_w, (unsigned)rsp_b_out); ISV(pl); }
+#endif
+        ISV("BOOT_DONE\n");
+        while (1) { }
+    }
+#endif /* BOOT_PROBE */
+#endif
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
