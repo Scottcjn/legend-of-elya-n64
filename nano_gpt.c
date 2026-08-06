@@ -771,6 +771,30 @@ static void project_to_logits(const SGAIHeader *hdr, float em_scale,
 static uint32_t host_rng_seed_pending = 0;
 static void host_rng_reseed(uint32_t v){ host_rng_seed_pending = v ? v : 1u; }
 #endif
+
+/* SAMP_TRACE — per-character instrumentation of the REAL sampling path.
+ * Host-only diagnostic; entirely absent from any build that does not define it,
+ * so the shipped code path is byte-identical (verified with objdump).
+ * Records, for every call at temperature_q8 != 0:
+ *   - top-5 by raw logit, and their softmax probabilities BEFORE the penalty
+ *   - which characters the repetition penalty zeroed and how much mass that cost
+ *   - the surviving total, the uniform draw r, and the character actually chosen
+ *   - whether the total<=0 fallback fired (and what it returned) */
+#ifdef SAMP_TRACE
+#include <stdio.h>
+static FILE *samp_trace_fp = NULL;
+static int   samp_trace_idx = 0;
+static void samp_trace_open(const char *path){
+    if (samp_trace_fp) fclose(samp_trace_fp);
+    samp_trace_fp = fopen(path, "w"); samp_trace_idx = 0;
+}
+static const char *samp_chr(int c, char *b){
+    if (c == 32) { b[0]='S';b[1]='P';b[2]=0; }
+    else { b[0]=(char)c; b[1]=0; }
+    return b;
+}
+#endif
+
 static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
                              const uint8_t *hist, int n_hist)
 {
@@ -804,6 +828,12 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
     /* Zero non-printable */
     for (int i = 0; i < 32; i++) probs[i] = 0.0f;
     for (int i = 127; i < SGAI_VOCAB; i++) probs[i] = 0.0f;
+
+#ifdef SAMP_TRACE
+    /* snapshot the distribution BEFORE the repetition penalty touches it */
+    static float samp_pre[SGAI_VOCAB];
+    for (int i = 0; i < SGAI_VOCAB; i++) samp_pre[i] = probs[i];
+#endif
 
     /* Repetition penalty: zero recent tokens */
 #ifndef SGAI_NO_REP_PENALTY
@@ -840,24 +870,114 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
     /* Multinomial sampling */
     float total = 0.0f;
     for (int i = 32; i <= 126; i++) total += probs[i];
+
+#ifdef SAMP_TRACE
+    int  samp_chosen = -1, samp_fallback = 0, samp_rank = -1;
+    float samp_r = 0.0f;
+#endif
+
     if (total <= 0.0f) {
+#ifndef SGAI_FALLBACK_ASCII_SCAN
+        /* Fallback: the model's own argmax.
+         *
+         * The old fallback below scanned `for (i = 32; ...)` and returned the
+         * first character not in the recency history.  Index 32 is ' ' and
+         * index 33 is '!', so whenever the model was certain about a space that
+         * had just been used -- which at temperature 0.25 is the common case,
+         * because the softmax saturates to a one-hot and zeroing the top entry
+         * zeroes ALL the mass -- it emitted a literal '!' carrying no model
+         * information at all.  Traced: 8 of 8 '!' characters in an 80-character
+         * sample came from here, and once one is in the KV cache the rest of the
+         * sentence derails.  Falling back to the argmax degrades gracefully to
+         * "the sampler repeated a character" instead of "the sampler shouted".
+         */
+        {
+            int best = 32;
+            for (int i = 33; i <= 126; i++)
+                if (logits[i] > logits[best]) best = i;
+#ifdef SAMP_TRACE
+            samp_chosen = best; samp_fallback = 1; goto samp_done;
+#else
+            return (uint8_t)best;
+#endif
+        }
+#else
         /* Fallback: first non-penalized printable char */
         for (int i = 32; i <= 126; i++) {
             int in_hist = 0;
             for (int h = 0; h < n_hist && h < 3; h++)
                 if (hist[h] == (uint8_t)i) { in_hist = 1; break; }
+#ifdef SAMP_TRACE
+            if (!in_hist) { samp_chosen = i; samp_fallback = 1; goto samp_done; }
+#else
             if (!in_hist) return (uint8_t)i;
+#endif
         }
+#endif /* SGAI_FALLBACK_ASCII_SCAN */
+#ifdef SAMP_TRACE
+        samp_chosen = ' '; samp_fallback = 2; goto samp_done;
+#else
         return ' ';
+#endif
     }
 
     float r = (float)(rng & 0xFFFF) / 65536.0f * total;
     float csum = 0.0f;
     for (int i = 32; i <= 126; i++) {
         csum += probs[i];
+#ifdef SAMP_TRACE
+        if (r < csum) { samp_chosen = i; samp_r = r; goto samp_done; }
+#else
         if (r < csum) return (uint8_t)i;
+#endif
     }
+#ifdef SAMP_TRACE
+    samp_chosen = ' '; samp_fallback = 3;
+samp_done:
+    if (samp_trace_fp) {
+        /* rank of the chosen char in the PRE-penalty distribution */
+        samp_rank = 0;
+        for (int i = 32; i <= 126; i++)
+            if (samp_pre[i] > samp_pre[samp_chosen]) samp_rank++;
+        /* top-5 of the pre-penalty distribution */
+        int t5[5]; float p5[5];
+        for (int k = 0; k < 5; k++) { t5[k] = -1; p5[k] = -1.0f; }
+        for (int i = 32; i <= 126; i++) {
+            for (int k = 0; k < 5; k++) {
+                if (samp_pre[i] > p5[k]) {
+                    for (int m = 4; m > k; m--) { p5[m]=p5[m-1]; t5[m]=t5[m-1]; }
+                    p5[k] = samp_pre[i]; t5[k] = i; break;
+                }
+            }
+        }
+        float banned_mass = 0.0f;
+        char hb[64]; int hbn = 0; hb[0] = 0;
+#ifndef SGAI_NO_REP_PENALTY
+        for (int h = 0; h < n_hist && h < SGAI_REP_HIST; h++) {
+            int t = hist[h];
+            if (t >= 32 && t <= 126) {
+                banned_mass += samp_pre[t];
+                char tb[4]; samp_chr(t, tb);
+                hbn += snprintf(hb+hbn, sizeof(hb)-hbn, "%s%s", hbn?",":"", tb);
+            }
+        }
+#endif
+        char cb[4], kb[4];
+        fprintf(samp_trace_fp, "%3d chosen=%-2s rank=%2d pre_p=%.6f fallback=%d "
+                "banned=[%s] banned_mass=%.6f total_left=%.9g r=%.9g | top5:",
+                samp_trace_idx++, samp_chr(samp_chosen, cb), samp_rank,
+                samp_pre[samp_chosen], samp_fallback,
+                hb, banned_mass, total, samp_r);
+        for (int k = 0; k < 5 && t5[k] >= 0; k++)
+            fprintf(samp_trace_fp, " %s=%.5f(L%.3f)",
+                    samp_chr(t5[k], kb), p5[k], logits[t5[k]]);
+        fprintf(samp_trace_fp, "\n");
+        fflush(samp_trace_fp);
+    }
+    return (uint8_t)samp_chosen;
+#else
     return ' ';
+#endif
 }
 
 /* -----------------------------------------------------------------------
@@ -892,8 +1012,11 @@ void sgai_init(SGAIState *state, const void *rom_weights)
             state->is_loaded = 1;
             /* em_scale_x16 is uint8_t — no byte swap needed */
             state->em_scale = (float)hdr->em_scale_x16 / 16.0f;
+#ifndef SGAI_EM_SCALE_DEFAULT
+#define SGAI_EM_SCALE_DEFAULT 3.5f    /* shipped fallback for old weight files */
+#endif
             if (state->em_scale < 0.01f)
-                state->em_scale = 3.5f;  /* default for old weight files */
+                state->em_scale = (float)(SGAI_EM_SCALE_DEFAULT);
         }
     }
 

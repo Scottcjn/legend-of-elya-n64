@@ -97,6 +97,49 @@ ifeq ($(PSE_FIX),1)
 CFLAGS += -DPSE_COND_NORMALIZE -DPSE_PHYSARUM_MIN=0.97f -DPSE_PHYSARUM_MAX=1.03f
 endif
 
+# --- Repetition penalty fix (docs/N64_SAMPLING_FINDINGS.md) -----------------
+# THIS IS THE ONE THAT WAS MISSING.  f32aeff added the SGAI_NO_REP_PENALTY guard
+# to nano_gpt.c and 1bc17e5's commit message claims the penalty is fixed, but no
+# commit ever added -DSGAI_NO_REP_PENALTY to a build, so every ROM ever shipped
+# still runs the hard zero.  PSE_FIX got wired up; this did not.
+#
+# `sample_logits` at temperature_q8 != 0 does `probs[t] = 0.0f` for the last 3
+# emitted characters.  This is a CHARACTER model, so that forbids every doubled
+# letter and, far worse, forbids the space -- which English needs every ~5
+# characters against a 3-character ban window.  At temperature_q8 = 64 the
+# softmax is saturated (raw logits reach +-77, inv_temp = 4), so probs is a
+# one-hot: zeroing the top entry zeroes ALL the mass, `total` underflows to
+# exactly 0.0f, and the `total <= 0` fallback fires.  Instrumented on the real
+# sampling path, prompt "sage says: Who are you?: ", 80 characters:
+#   top-1 pre-penalty probability >= 0.999999   68/80   the DISTRIBUTION IS FINE
+#   chosen char was the argmax                  68/80
+#   chosen char was a real tail draw (rank>=2)   1/80
+#   steps where the penalty removed >= 0.999 mass  10/80
+#   characters emitted as '!'                      8    ALL 8 from the fallback
+# 20 seeded runs of the exact game loop, same prompt, temp_q8 = 64:
+#   as shipped   mean 75.4 chars   4/20 clean terminations   0 doubled   8.16% '!'
+#   this fix     mean 33.2 chars  20/20 clean terminations  14 doubled   0.00% '!'
+# A SOFT penalty is a measured no-op (REP_FACTOR 0.5 / 0.25 / 0.01 all produce
+# byte-identical transcripts to no penalty at all), so removal is the fix.
+# Set REP_FIX=0 to reproduce the shipped behaviour.
+REP_FIX ?= 1
+ifeq ($(REP_FIX),1)
+CFLAGS += -DSGAI_NO_REP_PENALTY
+else
+CFLAGS += -DSGAI_FALLBACK_ASCII_SCAN
+endif
+
+# --- First-character fix (docs/N64_SAMPLING_FINDINGS.md) --------------------
+# update_generating_step() keeps the model's first predicted character in
+# G.gen_last_tok, feeds it back correctly, and never appends it to dialog_buf.
+# Every NPC line loses its first character: "I am Sophia" reaches the player as
+# " am Sophia", "The N64 runs a transformer" as "he N64 runs a transformer".
+# Set FIRSTCHAR_FIX=0 to reproduce the shipped behaviour.
+FIRSTCHAR_FIX ?= 1
+ifeq ($(FIRSTCHAR_FIX),1)
+CFLAGS += -DSGAI_EMIT_FIRST_TOKEN
+endif
+
 # Extra flags for one-off verification builds, e.g. EXTRA=-DBOOT_PROBE.
 # APPENDED, never assigned: `make CFLAGS=...` on the command line silently
 # discards every knob above it (that mistake produced an 8,866,956-byte bss

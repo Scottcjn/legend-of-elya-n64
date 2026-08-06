@@ -1524,6 +1524,24 @@ static void update_generating_step(void) {
             // DO NOT overwrite it — that prediction seeds the first output token.
             G.gen_start_frame = G.frame;
             G.gen_out_count   = 0;
+#ifdef SGAI_EMIT_FIRST_TOKEN
+            /* ...and it is also the FIRST CHARACTER OF THE ANSWER.  Phase 1
+             * feeds it back (correctly) but only ever appends the token that
+             * comes AFTER it, so it was fed to the model and never shown.
+             * Every line lost its first character: "I am Sophia Elya" reached
+             * the player as " am Sophia Elya", "The N64 runs a transformer" as
+             * "he N64 runs a transformer".  Visible in the shipped screenshot.
+             * Appending it here changes no model state — the KV cache already
+             * contains it — it only stops the display from eating it. */
+            {
+                uint8_t t0 = G.gen_last_tok;
+                if (t0 >= 32 && t0 <= 126 && t0 != '\n'
+                    && G.dialog_len < (int)sizeof(G.dialog_buf) - 1) {
+                    G.dialog_buf[G.dialog_len++] = t0;
+                    G.dialog_char = G.dialog_len;
+                }
+            }
+#endif
         }
     } else {
         // Phase 1: generate one output token
