@@ -1557,7 +1557,23 @@ static void update_generating_step(void) {
         // Period = end of first sentence — stop here for a clean response.
         // Every training answer ends with "." so the model reliably emits one.
         // Require 8+ output chars first to skip any period inside abbreviations.
-        if (tok == '.' && G.gen_out_count >= 8) tok = 0;
+        //
+        // ...but a '.' between digits is a DECIMAL POINT, not a full stop. This
+        // truncated "PowerPC G4 earns 2.5x RTC." to "PowerPC G4 earns 2". The
+        // model happens to prefer decimal-free answers for the twelve prompts
+        // the game asks today, so it did not bite — that is luck, not
+        // correctness, and any retrain can undo it.
+        //
+        // Only the PRECEDING character is available: the next token has not
+        // been generated yet, and deferring the decision would mean holding a
+        // character back from the display. A digit before the '.' is enough to
+        // disambiguate every case in the corpus. The cost is that a sentence
+        // legitimately ending in a digit no longer terminates here, which the
+        // '\n' check above and the 80-char cap below still bound.
+        if (tok == '.' && G.gen_out_count >= 8) {
+            char prev = (G.dialog_len > 0) ? G.dialog_buf[G.dialog_len - 1] : 0;
+            if (prev < '0' || prev > '9') tok = 0;
+        }
 
         // Append token — sample_logits already restricts to printable ASCII 32-126,
         // but double-check here as defensive measure (unsigned char cast matters)
@@ -1815,7 +1831,7 @@ static void game_init(void) {
         }
     }
 
-#if defined(COH_PROBE) || defined(BOOT_PROBE)
+#if defined(COH_PROBE) || defined(BOOT_PROBE) || defined(GAME12_PROBE)
 /* Two headless verification probes share this IS-Viewer preamble.
  * Each body is separately gated below and only one builds at a time. */
     /* COH_PROBE — coherence/throughput probe.  Runs inside game_init() because
@@ -1936,6 +1952,58 @@ static void game_init(void) {
         while (1) { }
     }
 #endif /* BOOT_PROBE */
+
+#ifdef GAME12_PROBE
+        /* GAME12_PROBE — run the twelve prompts the game actually offers
+         * (NPC_DIALOG_OPTIONS[3][4]) through the REAL runtime and print each
+         * answer.  This is the metric the retrain optimizes, measured on the
+         * target instead of on the host.
+         *
+         * Two arms per prompt:
+         *   G12  temperature 0  -- greedy, deterministic, directly comparable
+         *                          to the numpy oracle / eval12.py
+         *   G12T temperature 64 -- what update_generating_step() actually does
+         *
+         * Like the other probes this lives in game_init() because headless ares
+         * has no GPU and dies at the first rendered frame. */
+#ifndef G12_NGEN
+#define G12_NGEN 32
+#endif
+        sprintf(pl, "G12 rdy=%d bits=%d ctx=%d emx16=%d\n",
+                G.ai_ready, G.ai.w_bits, (int)SGAI_CTX,
+                (int)((const SGAIHeader *)G.ai.weights)->em_scale_x16);
+        ISV(pl);
+        if (G.ai_ready) {
+            static char out[G12_NGEN + 1];
+            for (int n = 0; n < NPC_COUNT; n++) {
+                for (int d = 0; d < DIALOG_OPTIONS; d++) {
+                    const char *p = NPC_DIALOG_OPTIONS[n][d];
+                    int P = (int)strlen(p);
+                    for (int arm = 0; arm < 2; arm++) {
+                        uint32_t temp = arm ? 64u : 0u;
+                        sgai_reset(&G.ai);
+                        uint8_t tok = 0;
+                        for (int i = 0; i < P; i++)
+                            tok = sgai_next_token(&G.ai, (uint8_t)p[i], 0);
+                        for (int i = 0; i < G12_NGEN; i++) {
+                            /* i==0 keeps the prediction made from the last
+                             * prompt token, exactly as SGAI_EMIT_FIRST_TOKEN
+                             * makes update_generating_step() do. */
+                            if (i) tok = sgai_next_token(&G.ai, tok, temp);
+                            out[i] = (char)tok;
+                        }
+                        out[G12_NGEN] = 0;
+                        sprintf(pl, "%s %d|%s|%s\n", arm ? "G12T" : "G12",
+                                n * DIALOG_OPTIONS + d, p, out);
+                        ISV(pl);
+                    }
+                }
+            }
+        }
+        ISV("G12_DONE\n");
+        while (1) { }
+    }
+#endif /* GAME12_PROBE */
 #endif
 }
 

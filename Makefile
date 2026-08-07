@@ -59,7 +59,12 @@ endif
 # The blob in filesystem/ must be no wider than this: a "SEQ5" blob in a
 # SGAI_BITS=2 build is rejected loudly by the size guard, not silently mangled.
 #   make base SGAI_BITS=2   -> ternary build (needs a SEQ2 blob)
-SGAI_BITS ?= 8
+# Default is now 2: the shipped blob is a SEQ2 ternary model (2,031,628 B),
+# retrained 2026-08-06. It answers 12/12 of the game's dialogue prompts
+# where the previous SEAI int8 blob answered 0/12, and it is 3.32x smaller.
+# Build with SGAI_BITS=8 only if you also swap in an int8 SEAI blob; the
+# size guard rejects a mismatch loudly rather than mangling it silently.
+SGAI_BITS ?= 2
 CFLAGS += -DSGAI_WEIGHT_BITS=$(SGAI_BITS)
 
 # --- Verification builds ----------------------------------------------------
