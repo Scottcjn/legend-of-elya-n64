@@ -12,3 +12,10 @@ __pycache__/
 *.pyc
 # Large model weights (kept local; canonical source is filesystem/sophia_weights.bin)
 weights/*.bin
+
+# training artifacts: reproducible from training/, ~1GB, do not commit
+*.pt
+*.npz
+qat_out/
+ptq_out/
+mix_out/
