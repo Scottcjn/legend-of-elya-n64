@@ -1949,7 +1949,17 @@ static void game_init(void) {
                   (unsigned)rsp_n_wdma, (unsigned)rsp_b_w, (unsigned)rsp_b_out); ISV(pl); }
 #endif
         ISV("BOOT_DONE\n");
+#ifndef PROBE_THEN_RENDER
         while (1) { }
+#else
+        /* PROBE_THEN_RENDER: fall through into main()'s render loop instead
+         * of parking here.  Only useful on a GPU-capable display, where it
+         * answers a question the title-screen render test cannot: does the
+         * RDP still draw AFTER the LLM has run?  With the rspq-overlay
+         * matmul that is 912 overlay switches per token, so 16 tokens means
+         * ~14,592 switches of rdpq's saved state out and back in before the
+         * first frame is ever drawn. */
+#endif
     }
 #endif /* BOOT_PROBE */
 
