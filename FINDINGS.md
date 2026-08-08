@@ -90,3 +90,107 @@ usable window is ~3464 B, so the deficit is ~632 B.
 
 **This is the entire difficulty of the conversion.** Not the API — the
 budget. IMEM is not a problem; DMEM is.
+
+## F-O003 — the conversion, and why the DMEM deficit went away
+
+The deficit in F-O002 is only real if the buffers live in `.data`. They do
+not have to.
+
+`n64.mk` builds a ucode by linking with `rsp.ld` and then extracting the
+blob with `objcopy -O binary -j .text` and `-j .data`. **`.bss` is not
+extracted.** `rsp.ld` still places `.bss` in `ram_data` immediately after
+`.data`, so a `.bss` buffer gets a real DMEM address but contributes
+nothing to the ucode's data blob.
+
+That matters twice over. rspq's overlay switch does:
+
+```
+# Load overlay data (saved state is included)
+lhu t0, %lo(RSPQ_OVERLAY_DESCRIPTORS) + 0xE (ovl_index)
+jal DMAInAsync
+li  s4, %lo(_ovl_data_start)
+```
+
+i.e. it DMAs the **entire overlay data segment** on every switch, not just
+the saved state. A 3.4 KB `.space` in `.data` would therefore have been
+paid for on every single switch. In `.bss` it is paid for never.
+
+Measured footprint of `rsp_mm2_ovl.S`:
+
+```
+overlay text   560 B   (1184 total - 624 rspq resident)   budget 3472
+overlay data    48 B   (656 total  - 608 rspq resident)   budget 3488
+mm_scratch @ 0x2D0 -> 3376 B of DMEM scratch, transferred never
+```
+
+So the overlay moves 48 bytes of data and 560 bytes of code per switch.
+
+### What actually changed in the kernel
+
+The arithmetic is untouched — both inner loops are byte-for-byte the ones
+from `rsp_mm2.S`. The plumbing changes were:
+
+- `break` -> `jr sp`, where `sp` holds the `ra` rspq entered us with (the
+  DMA helpers use `jal`, and the RSP has no stack, so `sp` is just a spare
+  register here).
+- `gp` is reserved by rspq, so the superblock counter moved to `t8`.
+- Dropped `#include <rsp_dma.inc>`; rspq already includes it.
+- `$v30`/`$v31` are rspq's `vshift`/`vshift8`, but rspq re-runs
+  `vxor vzero` + `lqv vshift` + `lqv vshift8` **before every command
+  dispatch**, so clobbering them is safe. Verified in the dispatch tail of
+  `rsp_queue.inc`.
+- The CPU can no longer poke DMEM with `rsp_load_data()` (the RSP is busy
+  running the queue), so the overlay DMAs its own parameter block and
+  activation vector in, given an RDRAM pointer passed in the command.
+
+### Buffer placement became dynamic, and that is a small win
+
+Since the buffers no longer sit at fixed offsets, the CPU packs them into
+the scratch window for the shape in hand (16-aligned, because LQV/SQV only
+move full quadwords from 16-aligned addresses — the old fixed offsets got
+that for free). Rows buffered before an output DMA, old vs new:
+
+| shape (ternary) | old fixed layout | overlay dynamic layout |
+|---|---|---|
+| 256->256 q/k/v/o | 14 | 43 |
+| 256->1024 ff1 | 14 | 43 |
+| 1024->256 ff2 | 3 | 4 |
+
+So the overlay does *fewer* output DMAs than the standalone kernel did,
+which partly pays for the dispatch it adds.
+
+## F-O004 — it works: rendering-capable build, all 912 matmuls on the RSP
+
+`make base-rsp-ovl SGAI_BITS=2 EXTRA=-DBOOT_PROBE`, headless ares:
+
+```
+BOOT rdy=1 bits=2 bufbytes=2031632 ctx=128 failsz=0 cap=0
+GAME TOKS 110 32 76 97 98 115 32 98 117 105 108 116 32 109 101 46
+GAME TEXT n Labs built me.
+GAME CP0 gen16=299118148
+RSPPATH rsp=912 cpu=0
+RSPDMA wdma=350208 wKiB=31920 outKiB=29184
+BOOT_DONE
+```
+
+`rsp=912 cpu=0` — every matmul went to the RSP, nothing fell back to the
+CPU because a shape would not fit the reduced DMEM window.
+
+Against the standalone RSP ternary figure of 298,088,755 recorded before
+the conversion, this is **+1,029,393 counts, +0.35 %**. The overlay
+dispatch is close to free at this granularity (912 dispatches across 16
+tokens, ~1,129 counts of overhead each). Same-tree A/B and token
+comparison follow in F-O005.
+
+One emulator warning appears once, at the first overlay switch:
+
+```
+[unusual] RSP DMA writing to RDRAM address 0x23a18 which is cached
+          RSP DMA started at RSP PC: 0x080
+```
+
+RSP PC 0x080 is inside rspq's own resident code (0x000-0x26F), not the
+overlay (0x270+), and the address is not one of ours — it is rspq saving
+the outgoing overlay's state. This is libdragon's own bookkeeping, fires
+once, and did not perturb any result below. Noting it rather than
+explaining it away.
