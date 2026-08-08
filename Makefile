@@ -186,6 +186,31 @@ $(BUILD_DIR)/legend_of_elya_rsp.elf: $(BUILD_DIR)/legend_of_elya_rsp.o $(BUILD_D
 legend_of_elya_rsp.z64: N64_ROM_TITLE="Elya RSP"
 legend_of_elya_rsp.z64: $(BUILD_DIR)/legend_of_elya_rsp.dfs
 
+# --- RSP-as-rspq-OVERLAY ROM (the playable one) -------------------------------
+# Same LLM as base-rsp, but the matmul is an rspq overlay instead of a
+# standalone microcode, so it coexists with the rdpq ucode rdpq_init()
+# installs.  base-rsp renders nothing after sgai_init(); this one does.
+base-rsp-ovl: legend_of_elya_rsp_ovl.z64
+
+$(BUILD_DIR)/legend_of_elya_rsp_ovl.dfs: filesystem/sophia_weights.bin
+
+$(BUILD_DIR)/nano_gpt_rsp_ovl.o: nano_gpt.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -o $@ $<
+
+$(BUILD_DIR)/matmul_rsp2_ovl.o: matmul_rsp2.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DRSP_MM_OVERLAY -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_rsp_ovl.o: legend_of_elya.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_rsp_ovl.elf: $(BUILD_DIR)/legend_of_elya_rsp_ovl.o $(BUILD_DIR)/nano_gpt_rsp_ovl.o $(BUILD_DIR)/matmul_rsp2_ovl.o $(BUILD_DIR)/rsp_mm2_ovl.o
+
+legend_of_elya_rsp_ovl.z64: N64_ROM_TITLE="Elya RSP OVL"
+legend_of_elya_rsp_ovl.z64: $(BUILD_DIR)/legend_of_elya_rsp_ovl.dfs
+
 # --- Mining ROM (CPU LLM + Pico bridge + RTC mining) ---
 mining: legend_of_elya_mining.z64
 
@@ -260,11 +285,11 @@ reference_cli: reference_cli.c
 	$(CC) -o reference_cli reference_cli.c -lm -std=c99
 
 .PHONY: reference
-	rm -rf $(BUILD_DIR) legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64 reference_cli
+	rm -rf $(BUILD_DIR) legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_rsp_ovl.z64 legend_of_elya_mining.z64 legend_of_elya_rpc_mining.z64 legend_of_elya_3d.z64 reference_cli
 
 -include $(wildcard $(BUILD_DIR)/*.d)
 
-.PHONY: all base base-rsp mining rpc-mining 3d reference clean
+.PHONY: all base base-rsp base-rsp-ovl mining rpc-mining 3d reference clean
 
 reference: reference_cli
 reference_cli: reference_cli.c

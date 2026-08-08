@@ -21,7 +21,18 @@
 #include <string.h>
 #include <libdragon.h>
 
+/* RSP_MM_OVERLAY selects the rspq-overlay kernel (rsp_mm2_ovl.S), which
+ * coexists with rdpq.  Without it we get the original standalone kernel
+ * (rsp_mm2.S), which calls rsp_load() and therefore evicts the rspq
+ * microcode rdpq_init() installed -- correct arithmetic, but nothing
+ * renders afterwards.  Both are kept so the overlay's dispatch overhead can
+ * be measured against the standalone rather than assumed.  See FINDINGS.md. */
+#ifdef RSP_MM_OVERLAY
+#include <rspq.h>
+DEFINE_RSP_UCODE(rsp_mm2_ovl);
+#else
 DEFINE_RSP_UCODE(rsp_mm2);
+#endif
 
 #define P_MODE        0x00
 #define P_OUT_DIM     0x04
@@ -32,8 +43,17 @@ DEFINE_RSP_UCODE(rsp_mm2);
 #define P_OUT_BASE    0x18
 #define P_ROWS_FLUSH  0x1C
 #define P_OUT_ROW_B   0x20
+/* Overlay-only: the buffers are no longer at fixed DMEM offsets, because
+ * rspq's resident state owns the bottom of DMEM and what is left has to be
+ * packed per shape. */
+#define P_XI_DMEM     0x24
+#define P_WBUF_DMEM   0x28
+#define P_OUT_DMEM    0x2C
+#define P_XI_RDRAM    0x30
+#define P_XI_BYTES    0x34
 
 #define DM_XI  0x060
+#define DMEM_END 0x1000u
 
 /* Constant factor the kernel bakes into each product:
  *   int8    : LPV yields w<<8            -> 256
@@ -105,6 +125,66 @@ static float f16d(uint16_t f16)
     return u.f;
 }
 
+#ifdef RSP_MM_OVERLAY
+
+static uint32_t mm_ovl_id;
+static uint32_t mm_scratch_base;          /* DMEM offset, 0 = not probed  */
+static uint32_t mm_layout_rb[4] __attribute__((aligned(16)));
+
+/* Where the three buffers land inside the overlay's DMEM scratch window. */
+typedef struct { uint32_t xi, wbuf, out; int rows_flush; } mm_plan_t;
+
+/* Pack activations, one weight row, and the block-sum window into whatever
+ * DMEM is left, keeping every base 16-aligned (LQV/SQV load and store full
+ * quadwords only from 16-aligned addresses; the standalone kernel got this
+ * for free from its hand-picked fixed offsets).  Returns 0 if the shape
+ * cannot fit, in which case the caller falls back to the CPU kernel. */
+static int rsp2_plan(int in_dim, int row_bytes, int out_row_b, int out_dim,
+                     mm_plan_t *p)
+{
+    if (!mm_scratch_base) return 0;
+
+    uint32_t xi   = (mm_scratch_base + 15u) & ~15u;
+    uint32_t wbuf = (xi + (uint32_t)in_dim * 2u + 15u) & ~15u;
+    /* +8 because DMAIn transfers row_bytes+8 to absorb RDRAM misalignment,
+     * +8 more of slack, matching the standalone kernel's 1040-for-1024. */
+    uint32_t out  = (wbuf + (uint32_t)row_bytes + 16u + 15u) & ~15u;
+
+    if (out + (uint32_t)out_row_b > DMEM_END) return 0;
+
+    int rows = (int)((DMEM_END - out) / (uint32_t)out_row_b);
+    if (rows > out_dim) rows = out_dim;
+
+    p->xi = xi; p->wbuf = wbuf; p->out = out; p->rows_flush = rows;
+    return 1;
+}
+
+int rsp_matmul_init(void)
+{
+    /* rdpq_init() has already brought rspq up; registering an overlay adds
+     * the matmul alongside it instead of replacing it. */
+    mm_ovl_id = rspq_overlay_register(&rsp_mm2_ovl);
+
+    /* Ask the overlay where its own scratch window starts rather than
+     * hardcoding a boundary that moves whenever libdragon's resident state
+     * changes size.  MMCmd_Layout (0x1) DMAs it back to us. */
+    data_cache_hit_writeback_invalidate(mm_layout_rb, sizeof(mm_layout_rb));
+    rspq_write(mm_ovl_id, 0x1, 0, (uint32_t)(uintptr_t)mm_layout_rb);
+    rspq_wait();
+    data_cache_hit_invalidate(mm_layout_rb, sizeof(mm_layout_rb));
+
+    mm_scratch_base = mm_layout_rb[0];
+    uint32_t reported_size = mm_layout_rb[1];
+
+    /* Sanity-check what came back before trusting it with DMA addresses. */
+    rsp2_ready = (mm_scratch_base >= 0x100u && mm_scratch_base < DMEM_END &&
+                  reported_size == DMEM_END - mm_scratch_base);
+    if (!rsp2_ready) mm_scratch_base = 0;
+    return rsp2_ready;
+}
+
+#else  /* standalone kernel: owns the whole RSP, evicts rspq */
+
 int rsp_matmul_init(void)
 {
     rsp_init();
@@ -112,6 +192,8 @@ int rsp_matmul_init(void)
     rsp2_ready = 1;
     return 1;
 }
+
+#endif
 
 int rsp_matmul_available(void) { return rsp2_ready; }
 
@@ -156,8 +238,20 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
 {
     const int nsb = in_dim >> 8;
 
-    if (!rsp2_ready || (bits != 8 && bits != 2) ||
-        (in_dim & 255) || in_dim > RSP2_MAX_IN || out_dim > RSP2_MAX_OUT) {
+    int shape_ok = (rsp2_ready && (bits == 8 || bits == 2) &&
+                    !(in_dim & 255) && in_dim <= RSP2_MAX_IN &&
+                    out_dim <= RSP2_MAX_OUT);
+#ifdef RSP_MM_OVERLAY
+    /* The overlay only gets the DMEM rspq does not need, so a shape can be
+     * arithmetically fine and still not fit.  Decide that here, not after
+     * we have already staged the activations. */
+    mm_plan_t plan = { 0, 0, 0, 0 };
+    if (shape_ok)
+        shape_ok = rsp2_plan(in_dim, (bits == 8) ? in_dim : (in_dim / 4),
+                             nsb * 64, out_dim, &plan);
+#endif
+
+    if (!shape_ok) {
         rsp_mm_calls_cpu++;
         /* Exact CPU fallback, same block-hoisted form as nano_gpt.c. */
         const int nblk = in_dim / SGAI_Q_BLOCK;
@@ -233,9 +327,13 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
     /* ---- dispatch -------------------------------------------------------- */
     const int row_bytes = (bits == 8) ? in_dim : (in_dim / 4);
     const int out_row_b = nsb * 64;
+#ifdef RSP_MM_OVERLAY
+    const int rows_flush = plan.rows_flush;
+#else
     int rows_flush = 912 / out_row_b;      /* DMEM output window is 912 bytes */
     if (rows_flush < 1) rows_flush = 1;
     if (rows_flush > out_dim) rows_flush = out_dim;
+#endif
 
     rsp2_params[P_MODE / 4]       = (bits == 8) ? 0u : 1u;
     rsp2_params[P_OUT_DIM / 4]    = (uint32_t)out_dim;
@@ -246,6 +344,13 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
     rsp2_params[P_OUT_BASE / 4]   = (uint32_t)(uintptr_t)rsp2_rb;
     rsp2_params[P_ROWS_FLUSH / 4] = (uint32_t)rows_flush;
     rsp2_params[P_OUT_ROW_B / 4]  = (uint32_t)out_row_b;
+#ifdef RSP_MM_OVERLAY
+    rsp2_params[P_XI_DMEM / 4]    = plan.xi;
+    rsp2_params[P_WBUF_DMEM / 4]  = plan.wbuf;
+    rsp2_params[P_OUT_DMEM / 4]   = plan.out;
+    rsp2_params[P_XI_RDRAM / 4]   = (uint32_t)(uintptr_t)rsp2_xi;
+    rsp2_params[P_XI_BYTES / 4]   = (uint32_t)(in_dim * 2);
+#endif
 
     data_cache_hit_writeback_invalidate(rsp2_xi, (unsigned long)(in_dim * 2));
     data_cache_hit_writeback_invalidate(rsp2_params, sizeof(rsp2_params));
@@ -255,9 +360,17 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
     data_cache_hit_writeback_invalidate(rsp2_rb,
         (unsigned long)((size_t)out_dim * out_row_b));
 
+#ifdef RSP_MM_OVERLAY
+    /* The RSP is running the rspq loop, so DMEM cannot be poked directly any
+     * more.  The overlay pulls the parameter block in itself, and the
+     * parameter block tells it where to find the activations. */
+    rspq_write(mm_ovl_id, 0x0, 0, (uint32_t)(uintptr_t)rsp2_params);
+    rspq_wait();
+#else
     rsp_load_data(rsp2_xi, (unsigned long)(in_dim * 2), DM_XI);
     rsp_load_data(rsp2_params, 64, 0);
     rsp_run();
+#endif
 
     CP0_RD(_c2);
     rsp_n_wdma += (uint32_t)out_dim;
