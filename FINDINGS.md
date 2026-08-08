@@ -227,3 +227,74 @@ comparing my overlay number against the old recorded number would be
 measuring the blob, not the overlay. Every speedup claim below is
 therefore a **same-blob, same-tree A/B**: standalone kernel vs overlay
 kernel, identical ROM otherwise.
+
+## F-O006 — rendering: the overlay renders, the standalone crashes by name
+
+Headless ares has no GPU, so this had to be run on a real display
+(`DISPLAY=:0`, AMD 780M, direct rendering). Both ROMs are the playable
+builds — no probe, no `while(1){}` — booted and screenshotted after ~45 s.
+
+**Overlay build** (`make base-rsp-ovl SGAI_BITS=2`) —
+`screenshots/rspq_overlay_renders.png`:
+
+```
+LEGEND OF ELYA
+Nintendo 64 Homebrew
+Elyan Labs
+World's First N64 LLM
+[Sophia AI: LOADED]
+Press START to enter the dungeon...
+                                            36 VPS
+```
+
+`[Sophia AI: LOADED]` is the game reporting that `sgai_init()` completed,
+which is the call that runs `rsp_matmul_init()` -> `rspq_overlay_register()`
+and permutes every weight tensor. So the matmul is loaded **and** the RDP
+is drawing, at 36 VPS.
+
+**Standalone build** (`make base-rsp SGAI_BITS=2`), same game, same frame —
+`screenshots/standalone_rsp_crash.png`:
+
+```
+RSP CRASH | rsp_mm2 | rspq_next_buffer (src/rspq/rspq.c:977)
+Crash symptom: wait loop timed out (200 ms)
+PC:054 | STATUS:5000 [sig5 sig7] | DP_STATUS: e8 [gclk pipe busy ready]
+```
+
+libdragon names the offending microcode in its own crash header: `rsp_mm2`.
+This is the reported bug, reproduced exactly and mechanically explained —
+`rsp_load(&rsp_mm2)` overwrote the rspq microcode `rdpq_init()` installed,
+so the first time rdpq needed the queue engine the RSP was running the
+matmul instead, and rspq's 200 ms wait loop timed out.
+
+That is as clean an A/B as this question admits: identical game, identical
+weights, one line of dispatch difference, crash vs 36 VPS.
+
+## F-O007 — overlay dispatch overhead: +0.06 %, same blob, same tree
+
+Ternary, prompt "Elya", 16 generated tokens, both ROMs from this tree with
+the same `filesystem/sophia_weights.bin`:
+
+| arm | CP0 gen16 | vs CPU ternary |
+|---|---|---|
+| CPU ternary | 547,832,290 | -- |
+| RSP standalone (`rsp_mm2.S`) | 298,935,090 | 1.833x |
+| **RSP rspq overlay** | **299,118,148** | **1.831x** |
+
+Overlay cost against the standalone: **+183,058 counts on 912 dispatches
+across 16 tokens = +0.0612 %**, i.e. ~201 CP0 counts per dispatch.
+
+All three arms produce the identical token stream (F-O005).
+
+The overhead is small enough to be *below* the blob-to-blob variance
+(0.31 %) that would have contaminated a naive comparison against the old
+recorded figure — which is exactly why the A/B had to be same-blob. Had I
+compared against the pre-retrain 298,088,755 I would have reported +0.35 %,
+which would have been mostly blob, not overlay.
+
+Two things make the dispatch this cheap:
+- the overlay's data segment is 48 bytes (`.bss`, F-O003), so a switch
+  moves 48 B of data and 560 B of code, not 3.4 KB;
+- the dynamic buffer packing buys back output DMAs (43 rows per flush
+  instead of 14 on the 256-wide shapes), partly cancelling the dispatch it
+  adds.
