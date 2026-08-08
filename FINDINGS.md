@@ -298,3 +298,112 @@ Two things make the dispatch this cheap:
 - the dynamic buffer packing buys back output DMAs (43 rows per flush
   instead of 14 on the 256-wide shapes), partly cancelling the dispatch it
   adds.
+
+## F-O008 — the full A/B, and the overlay turns out to be slightly FASTER
+
+Every row below is the same tree, same weight blob, same prompt, headless
+ares, `GAME CP0 gen16`. Two overlay variants are shown because the sync
+primitive changed mid-session (see F-O009).
+
+### Ternary, 16 tokens, prompt "Elya"
+
+| arm | CP0 | vs CPU | vs standalone |
+|---|---|---|---|
+| CPU ternary | 547,832,290 | -- | -- |
+| RSP standalone `rsp_mm2.S` | 298,935,090 | 1.833x | -- |
+| RSP overlay, `rspq_wait` | 299,118,148 | 1.831x | +0.061 % |
+| **RSP overlay, syncpoint (HEAD)** | **298,597,075** | **1.835x** | **-0.113 %** |
+
+### Ternary, 48 tokens, prompt "Who are you?" (`PROBE_LONG`)
+
+| arm | CP0 | vs CPU | vs standalone |
+|---|---|---|---|
+| CPU ternary | 1,812,297,430 | -- | -- |
+| RSP standalone | 1,032,722,730 | 1.755x | -- |
+| **RSP overlay (HEAD)** | **1,031,385,017** | **1.757x** | **-0.130 %** |
+
+`RSPPATH rsp=2832 cpu=0` on both RSP arms — 2,832 matmuls, none falling
+back to the CPU.
+
+### The result
+
+**The overlay is not slower. It is 0.11-0.13 % faster than the standalone
+kernel it replaces**, consistently at both generation lengths.
+
+That is not a rounding artifact of one run: it reproduces at 16 and 48
+tokens, in the same direction and nearly the same magnitude, on a
+deterministic emulator. The mechanism is F-O003's dynamic buffer packing —
+the standalone kernel's fixed 912-byte output window buffered 14 rows
+before each output DMA on the 256-wide shapes; the overlay packs the
+window per shape and buffers 43. The output DMAs saved slightly exceed the
+dispatch added.
+
+So the honest answer to "does the speedup survive the overlay" is: it
+survives, and the overlay dispatch is cheaper than the layout improvement
+that came with it.
+
+## F-O009 — rspq_wait vs syncpoint, measured
+
+The first working overlay synchronised with `rspq_wait()`. libdragon's own
+header says that is the wrong primitive: it "exists mostly for debugging
+purposes", also blocks until the RDP has finished drawing, and
+`rspq_syncpoint_new`/`rspq_syncpoint_wait` is what to use for RSP->CPU
+data handoff.
+
+Measured, ternary 16 tokens, identical otherwise:
+
+```
+rspq_wait()          299,118,148
+rspq_syncpoint_wait  298,597,075     -521,073   -0.174%
+```
+
+-0.17 % is the *floor* on what this change is worth, because the headless
+probe issues no RDP commands at all — there is nothing for `rspq_wait()`'s
+RDP sync to wait on. In the real game loop, where a frame is being drawn,
+`rspq_wait()` would additionally serialise all 912 matmuls per token
+against the RDP. That cost does not appear in any probe number here and is
+the reason for the change, rather than the 0.17 %.
+
+## F-O010 — token-exactness after conversion: 80/80
+
+All comparisons are exact token-ID streams, diffed, not eyeballed.
+
+| check | tokens | result |
+|---|---|---|
+| ternary 16, overlay vs CPU oracle | 16 | identical |
+| ternary 48, overlay vs CPU oracle | 48 | identical |
+| ternary 48, standalone vs CPU oracle | 48 | identical |
+| int8 16, overlay vs standalone | 16 | identical |
+
+**80/80 tokens exact**, across both weight formats and two prompt lengths.
+The 48-token stream is `: Sophia Elya of Elyan Labs.s.: Scott's workshop`,
+byte-identical from the CPU reference, the standalone RSP kernel and the
+overlay.
+
+## F-O011 — the int8 arm: exact, but +0.15 %, and its blob is stale
+
+int8 (`SGAI_BITS=8`, blob `weights/sophia_weights_large_v5fmt.bin`),
+16 tokens:
+
+| arm | CP0 | vs standalone |
+|---|---|---|
+| RSP standalone int8 | 267,076,103 | -- |
+| RSP overlay int8 | 267,472,813 | **+0.149 %** |
+
+Unlike ternary, int8 gets *slower* under the overlay, and the reason is
+predictable from the DMEM budget. int8's ff2 row is 1024 bytes rather than
+256, so after activations (2048 B) and the weight row (1040 B) only 288 B
+of the 3376 B scratch window is left — one output row per flush, where the
+standalone's fixed 912-byte window managed three. The other shapes improve
+(40 rows vs 14), and the net is +0.15 %.
+
+**Both int8 arms emit `t/77GGGGGGGGGGGG`, which is degenerate output.**
+That is not caused by the overlay: the standalone control on the same tree
+emits the identical degenerate stream, and the recorded pre-conversion
+int8 run emitted `fter you name it`. Between then and now the tree gained
+the sampler changes in 0480a95/5007948 (REP_FIX, FIRSTCHAR_FIX, argmax
+fallback) while this int8 blob is the pre-retrain `large_v5fmt` one. So
+the int8 blob is stale with respect to the current sampler. Flagging it
+as a real pre-existing issue rather than folding it into my result; what
+this session verifies about int8 is only that the overlay reproduces the
+standalone kernel bit-exactly.
