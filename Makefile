@@ -3,7 +3,12 @@
 #
 # ROMs:
 #   make base        -> legend_of_elya.z64             (CPU LLM, standalone)
-#   make base-rsp    -> legend_of_elya_rsp.z64         (CPU+RSP LLM, standalone)
+#   make base-rsp    -> legend_of_elya_rsp.z64         (CPU+RSP LLM, standalone ucode)
+#                                                     ** DOES NOT RENDER: rsp_load()
+#                                                     evicts rdpq's rspq microcode.
+#                                                     Headless measurement only. **
+#   make base-rsp-ovl-> legend_of_elya_rsp_ovl.z64     (CPU+RSP LLM as an rspq OVERLAY)
+#                                                     ** the playable RSP build **
 #   make mining      -> legend_of_elya_mining.z64      (CPU LLM + Pico + RTC mining)
 #   make rpc-mining  -> legend_of_elya_rpc_mining.z64  (RPC LLM + Pico + RTC mining)
 #   make 3d          -> legend_of_elya_3d.z64          (3D + combat)

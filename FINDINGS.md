@@ -519,3 +519,53 @@ undocumented.
 
 Plus the standalone arms independently matching the CPU oracle on the same
 runs, which is what makes these three-way rather than pairwise.
+
+---
+
+# Summary
+
+**The gap is closed.** The matmul now runs as an rspq overlay
+(`rsp_mm2_ovl.S`, `make base-rsp-ovl`), coexists with rdpq, and the game
+is playable with RSP acceleration.
+
+| question | answer |
+|---|---|
+| Does the installed libdragon support overlays? | Yes, fully. No version blocker. |
+| What was actually hard? | DMEM, not the API. `.bss` solved it. |
+| Does rendering work? | Yes. 48-49 VPS, before and after generation. NPC answers rendered in-game. |
+| Token-exact? | 80/80 against the CPU oracle, both weight formats, two prompt lengths. |
+| Does the speedup survive? | int8 4.790x -> **4.769x**. Ternary is 0.11-0.13 % *faster* than the standalone. |
+
+Builds:
+
+```
+make base-rsp-ovl SGAI_BITS=2      # playable, RSP-accelerated, renders
+make base-rsp     SGAI_BITS=2      # standalone ucode, headless measurement only
+```
+
+## What I could not do
+
+- **The int8 blob is stale.** `weights/sophia_weights_large_v5fmt.bin`
+  emits `t/77GGGGGGGGGGGG` on the current tree, identically from the CPU
+  path, the standalone RSP path and the overlay. The overlay is exact
+  against the CPU oracle on it, so the conversion is verified — but the
+  int8 *model* is broken with respect to the post-0480a95 sampler and I
+  did not fix or re-quantize it. Ternary, the shipped format, is fine.
+- **No real hardware.** Everything is ares. ares's own cache-coherency
+  warning at the first overlay switch (F-O004) comes from rspq's resident
+  code saving the outgoing overlay's state, not from this kernel, but I
+  could not confirm on silicon that it is benign.
+- **int8 loses 0.149 % rather than gaining.** The fix is real but was out
+  of scope: DMA the int8 weight row in halves so the output window stays
+  large. That would need a second buffering path in the kernel and fresh
+  token-exactness runs, and would only help a format whose blob is
+  currently broken anyway.
+- **`make all` still does not build the overlay ROM.** I documented the
+  target in the Makefile header rather than change what the default build
+  produces.
+- **Not benchmarked in the interactive loop.** All CP0 figures come from
+  the headless probe, where no RDP work competes with the matmul. The
+  switch from `rspq_wait()` to a syncpoint (F-O009) is specifically about
+  that interactive case, and its benefit there is argued from libdragon's
+  documented semantics, not measured. Measuring it needs a frame-time
+  probe inside the render loop.
