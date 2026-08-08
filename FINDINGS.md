@@ -194,3 +194,36 @@ overlay (0x270+), and the address is not one of ours — it is rspq saving
 the outgoing overlay's state. This is libdragon's own bookkeeping, fires
 once, and did not perturb any result below. Noting it rather than
 explaining it away.
+
+## F-O005 — token-exactness, 16 tokens, ternary, same blob
+
+The CPU kernel is the oracle-verified reference (docs/N64_RSP_FINDINGS.md
+F-R023). Both ROMs built from the same tree, same
+`filesystem/sophia_weights.bin` (sha256 8fe00867...), prompt "Elya", 16
+generated tokens:
+
+```
+CPU ternary  GAME TOKS 110 32 76 97 98 115 32 98 117 105 108 116 32 109 101 46
+             GAME TEXT n Labs built me.
+             GAME CP0 gen16=547832290
+
+RSP overlay  GAME TOKS 110 32 76 97 98 115 32 98 117 105 108 116 32 109 101 46
+             GAME TEXT n Labs built me.
+             GAME CP0 gen16=299118148
+             RSPPATH rsp=912 cpu=0
+```
+
+**16/16 tokens exact**, byte for byte, against the CPU reference.
+
+### A caution that changed the experiment design
+
+The pre-conversion RSP ternary figure (298,088,755) was measured on a
+*different* ternary blob — the one shipped before commit 2a74607
+retrained the model. F-R023 already recorded that two different ternary
+blobs of the same shape time 0.31 % apart (299,026,720 vs 298,088,755).
+
+That is the same order as the overlay overhead I am trying to measure, so
+comparing my overlay number against the old recorded number would be
+measuring the blob, not the overlay. Every speedup claim below is
+therefore a **same-blob, same-tree A/B**: standalone kernel vs overlay
+kernel, identical ROM otherwise.
