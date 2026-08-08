@@ -365,7 +365,11 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
      * more.  The overlay pulls the parameter block in itself, and the
      * parameter block tells it where to find the activations. */
     rspq_write(mm_ovl_id, 0x0, 0, (uint32_t)(uintptr_t)rsp2_params);
-    rspq_wait();
+    /* A syncpoint, not rspq_wait().  rspq_wait() additionally blocks until
+     * the RDP has finished drawing, which is harmless in the headless probe
+     * (no RDP work) but would serialise every matmul against the frame in
+     * the actual game.  A syncpoint waits for exactly our command. */
+    rspq_syncpoint_wait(rspq_syncpoint_new());
 #else
     rsp_load_data(rsp2_xi, (unsigned long)(in_dim * 2), DM_XI);
     rsp_load_data(rsp2_params, 64, 0);
