@@ -407,3 +407,60 @@ the int8 blob is stale with respect to the current sampler. Flagging it
 as a real pre-existing issue rather than folding it into my result; what
 this session verifies about int8 is only that the overlay reproduces the
 standalone kernel bit-exactly.
+
+## F-O012 — what the playable build actually does
+
+All captured from `make base-rsp-ovl SGAI_BITS=2` (no probe flags, current
+HEAD) on `DISPLAY=:0`, driven with synthetic input.
+
+1. `screenshots/rspq_overlay_title.png` — title screen, `[Sophia AI:
+   LOADED]`, **48 VPS**.
+2. `screenshots/rspq_overlay_renders_after_generation.png` — the
+   `PROBE_THEN_RENDER` build: 16 tokens generated inside `game_init()`
+   (912 matmuls each, so ~14,592 overlay switches with rdpq's state
+   swapped out and back each time), *then* the render loop starts.
+   Renders at **49 VPS**. This is the check the title screen cannot make:
+   rdpq state survives thousands of overlay switches, not just
+   registration.
+3. `screenshots/rspq_overlay_dungeon.png` — Crystal Dungeon: tiles, hearts,
+   MP bar, torch, chest, a mummy, the player and an NPC, `[A]Talk
+   [B]Keyboard (auto-attack)`.
+4. `screenshots/rspq_overlay_npc_answer.png` — **the point of the whole
+   exercise.** Arcane Library, Aldric the Keeper, prompt "What is your
+   name?" selected from the in-game menu, and the model's answer rendered
+   in the dialog box:
+
+```
+Aldric the Keeper
+Sophia Elya is my name
+[A] Next   [B] Close
+```
+
+   The `RSP` label above the dialog box is drawn under `#ifdef
+   USE_RSP_MATMUL` (legend_of_elya.c:1373), so its presence on screen is
+   itself confirmation that this is the RSP build and the RSP path is
+   compiled in.
+
+So: a player can boot the ROM, walk into the library, ask the NPC a
+question, and get an answer generated on the RSP while the RDP keeps
+drawing the room. That is what did not exist before this change.
+
+### Driving ares, for whoever repeats this
+
+- Headless ares has no GPU. Rendering can only be checked on `DISPLAY=:0`.
+- ares's window is named after the ROM, not "ares"; `xdotool search --name
+  ares` finds two 10x10 decoys. Use `wmctrl -l | grep <romname>`.
+- `import -window <id>` works; capturing by searching for "ares" does not.
+- **Tapped keys are dropped.** `xdotool key` is too short for ares to
+  latch; `keydown; sleep 0.35; keyup` works reliably.
+- Comparing screenshots to detect state changes must crop out the status
+  bar — the VPS counter changes every frame and makes every hash differ.
+- In this ares config START had **no keyboard binding at all**, so the
+  free-text "Ask Sophia" screen cannot be submitted from a keyboard. The
+  canned-prompt path (`[A]Talk` near an NPC) needs only A and the D-pad.
+- ares key indices in `settings.bml` are `0x1/0/<index>` with letters
+  alphabetical and contiguous: **a=35 ... z=60**. Derived from the existing
+  bindings (Pad.Left=35='a', Pad.Right=38='d', Pad.Down=53='s',
+  Pad.Up=57='w', A=58='x', X=60='z') and confirmed by driving the game.
+  A temporary Start binding was added for one run and the original
+  `settings.bml` restored afterwards (verified by diff).
