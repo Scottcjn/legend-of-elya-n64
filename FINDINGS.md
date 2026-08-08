@@ -464,3 +464,58 @@ drawing the room. That is what did not exist before this change.
   Pad.Up=57='w', A=58='x', X=60='z') and confirmed by driving the game.
   A temporary Start binding was added for one run and the original
   `settings.bml` restored afterwards (verified by diff).
+
+## F-O013 — the 4.79x arm: reproduced, and it survives at 4.769x
+
+The 4.79x headline was RSP int8 vs CPU int8, so answering "does the
+speedup survive" required measuring the CPU int8 arm on this tree too, not
+just the RSP ones. All three built from the same tree with the same blob
+(`weights/sophia_weights_large_v5fmt.bin`), 16 tokens:
+
+| arm | CP0 gen16 | speedup vs CPU int8 |
+|---|---|---|
+| CPU int8 | 1,275,545,400 | -- |
+| RSP standalone int8 | 267,076,103 | 4.776x |
+| **RSP rspq overlay int8** | **267,472,813** | **4.769x** |
+| *(recorded, pre-conversion)* | *266,167,042* | *4.790x* |
+
+The CPU int8 baseline reproduces the recorded 1,275,062,235 to **+0.038 %**,
+which is a useful sanity check that the harness and tree have not drifted
+under this arm.
+
+**The 4.79x survives the overlay conversion as 4.769x** — the overlay
+costs 0.149 % on the int8 arm, for the DMEM reason in F-O011 (int8's
+1024-byte ff2 weight row squeezes the output window down to one row per
+flush). On the ternary arm the overlay is instead 0.11-0.13 % *faster*
+(F-O008).
+
+### Correction to F-O011
+
+F-O011 said the int8 arm only verified overlay-vs-standalone equality.
+With the CPU int8 arm now measured, that understates it: the token stream
+
+```
+116 47 55 55 71 71 71 71 71 71 71 71 71 71 71 71
+```
+
+is byte-identical across **CPU int8, RSP standalone int8 and RSP overlay
+int8**. So int8 is 16/16 exact against the CPU oracle, same as ternary.
+
+It also settles the degenerate-text question raised in F-O011: the
+pure-CPU path emits `t/77GGGGGGGGGGGG` too. Nothing about the RSP, the
+overlay, or the DMEM repacking causes it — the `large_v5fmt` int8 blob is
+simply stale with respect to the current sampler (0480a95 / 5007948). A
+real pre-existing issue, and out of scope here, but it should not be left
+undocumented.
+
+### Final exactness tally for the overlay
+
+| check | tokens |
+|---|---|
+| ternary 16, overlay vs CPU oracle | 16 |
+| ternary 48, overlay vs CPU oracle | 48 |
+| int8 16, overlay vs CPU oracle | 16 |
+| **total** | **80/80 exact** |
+
+Plus the standalone arms independently matching the CPU oracle on the same
+runs, which is what makes these three-way rather than pairwise.
