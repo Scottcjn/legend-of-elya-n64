@@ -1,0 +1,1 @@
+../train_sophia_v7.py
