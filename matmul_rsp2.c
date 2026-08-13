@@ -161,6 +161,14 @@ static int rsp2_plan(int in_dim, int row_bytes, int out_row_b, int out_dim,
 
 int rsp_matmul_init(void)
 {
+    /* Idempotent.  sgai_init_ex() calls this once per model, and the dual
+     * consensus initialises TWO models; rspq_overlay_register() asserts if the
+     * same ucode is registered twice, so a second model would take the machine
+     * down at boot. */
+    static int mm_inited = 0;
+    if (mm_inited) return rsp2_ready;
+    mm_inited = 1;
+
     /* rdpq_init() has already brought rspq up; registering an overlay adds
      * the matmul alongside it instead of replacing it. */
     mm_ovl_id = rspq_overlay_register(&rsp_mm2_ovl);
@@ -187,6 +195,9 @@ int rsp_matmul_init(void)
 
 int rsp_matmul_init(void)
 {
+    static int mm_inited = 0;      /* see the overlay build's note */
+    if (mm_inited) return rsp2_ready;
+    mm_inited = 1;
     rsp_init();
     rsp_load(&rsp_mm2);
     rsp2_ready = 1;
