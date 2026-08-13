@@ -1,0 +1,5 @@
+logit RMS  ternary 7.8194   int8 8.2921   ratio 1.06x
+nearest power of two: shift0
+single   125/127   98.4%
+single1  125/127   98.4%
+raw      125/127   98.4%

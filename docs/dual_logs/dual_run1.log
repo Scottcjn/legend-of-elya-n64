@@ -1,0 +1,33 @@
+     1.487  Loaded legend_of_elya_dual
+     1.882  Vulkan Enabled: using paraLLEl-RDP
+     2.382  DUAL INIT mem=8388608 tern_sz=2031628 cap=2031632 int8_sz=3407884 cap=3407888 ok=11
+     2.802  DUAL MODELS tern rdy=1 bits=2 nl=8 | int8 rdy=1 bits=8 nl=4
+     2.802  DUAL KV tern=0x805dffb8 int8=0x8066ffc8 shift=5 ngen=16 ctx=128
+    31.097  DUAL TERN PROMPT toks=25 cp0=909132067 vbl=1161
+    31.097  DUAL TERN GEN_START
+    49.190  DUAL TERN GEN toks=16 cp0=605578460 vbl=773
+    49.191  DUAL TERN tps_vbl_x1000=1240 tps_cp0_x1000=1238
+    49.191  DUAL TERN RMS tern_x1000=6608 int8_x1000=0
+    49.191  DUAL TERN RSP calls=0 cpu=0 free=0 blocked=0
+    49.191  DUAL TERN RSPT stage=0 disp=0 wait=0 epi=0
+    49.191  DUAL TERN TEXT all me Sophia El
+    49.191  DUAL TERN GEN_END
+    57.155  DUAL INT8 PROMPT toks=25 cp0=234770428 vbl=299
+    57.155  DUAL INT8 GEN_START
+    62.338  DUAL INT8 GEN toks=16 cp0=161874474 vbl=207
+    62.338  DUAL INT8 tps_vbl_x1000=4633 tps_cp0_x1000=4633
+    62.339  DUAL INT8 RMS tern_x1000=0 int8_x1000=7973
+    62.339  DUAL INT8 RSP calls=984 cpu=0 free=0 blocked=984
+    62.339  DUAL INT8 RSPT stage=0 disp=0 wait=0 epi=0
+    62.339  DUAL INT8 TEXT alobe corad for 
+    62.339  DUAL INT8 GEN_END
+    97.132  DUAL VOTE PROMPT toks=25 cp0=1077452431 vbl=1375
+    97.133  DUAL VOTE GEN_START
+   119.297  DUAL VOTE GEN toks=16 cp0=724954877 vbl=926
+   119.297  DUAL VOTE tps_vbl_x1000=1035 tps_cp0_x1000=1034
+   119.297  DUAL VOTE RMS tern_x1000=6608 int8_x1000=7530
+   119.297  DUAL VOTE RSP calls=984 cpu=0 free=984 blocked=0
+   119.297  DUAL VOTE RSPT stage=0 disp=0 wait=0 epi=0
+   119.297  DUAL VOTE TEXT all me Sophia El
+   119.297  DUAL VOTE GEN_END
+   119.297  DUAL_DONE
