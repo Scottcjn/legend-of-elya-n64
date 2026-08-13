@@ -1,5 +1,12 @@
 # FINDINGS — making the RSP matmul coexist with rdpq
 
+> **Reading this for the tok/s figures? They are not here.** The CP0 counts in
+> this journal are cycle ratios between kernels, not rates. The rate audit —
+> including why the 4.769x below is **not** a tok/s speedup and why the shipped
+> ROM does 1.23 tok/s scalar and 2.19 tok/s on this overlay — is
+> [`docs/N64_RATE_FINDINGS.md`](docs/N64_RATE_FINDINGS.md), with raw logs in
+> `docs/rate_logs/`.
+
 Journal for the rspq-overlay conversion. Append-only; every entry is a
 discrete measured result, committed as it is written.
 
