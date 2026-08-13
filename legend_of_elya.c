@@ -203,9 +203,13 @@ typedef struct {
     uint32_t perf_frame_start;   // CP0 COUNT at frame start
     uint32_t perf_gen_cycles;    // cycles spent in sgai_next_token this frame
     uint32_t perf_gen_total_us;  // total generation time in microseconds
-    uint32_t perf_gen_start_us;  // timestamp when generation started
+    uint32_t perf_gen_start_us;  // CP0-derived timestamp when generation started
+    uint32_t perf_gen_start_vbl; // vblank count when generation started (WALL CLOCK)
     float    perf_cpu_pct;       // CPU% used by inference (0-100)
-    float    perf_toks_precise;  // precise tok/s using cycle counter
+    float    perf_toks_precise;  // DISPLAYED tok/s — measured against vblank
+    float    perf_toks_cp0;      // same rate derived from CP0 COUNT, for cross-check
+                                 // only; never displayed.  On silicon it agrees with
+                                 // perf_toks_precise, under an emulator it need not.
     int      perf_show;          // 1 = show performance overlay
     // Virtual keyboard
     int      kb_row;             // cursor row (0-3)
@@ -1429,6 +1433,48 @@ static void draw_text(surface_t *disp) {
     }
 }
 
+// ─── Honest wall-clock timebase: the VI vertical blank ───────────────────────
+/* WHY THIS EXISTS.  The tok/s counter used to divide a real token count by an
+ * elapsed time derived from CP0 COUNT.  CP0 COUNT is the CPU's own cycle
+ * counter: on silicon it advances at 46.875 MHz and therefore tracks wall
+ * clock, but under an emulator it is a SYNTHETIC quantity — it advances at
+ * whatever rate the emulator decides to charge for the instructions it just
+ * ran, which need not track real elapsed time at all.  A real numerator over
+ * a synthetic denominator produces a confident, plausible, wrong number, and
+ * nothing in the arithmetic looks wrong when you read it.
+ *
+ * The VI vertical blank cannot be faked the same way.  It is 59.94 Hz on NTSC
+ * hardware because that is the rate the console shoves fields at a
+ * television; it is a property of the video standard, not of how fast anyone
+ * thinks the CPU is.  Counting vblanks measures WALL CLOCK.
+ *
+ * The Sega Genesis port of this engine already counts vblanks for exactly
+ * this reason.  A visible consequence there, and here, is that the reported
+ * rate is quantised to VI_HZ/k for integer k — which is itself the evidence
+ * that the number came off a clock rather than out of arithmetic. */
+static volatile uint32_t g_vbl = 0;      /* incremented by the VI interrupt */
+static float            g_vi_hz = 59.94f; /* set from get_tv_type() in main() */
+
+static void vbl_counter(void) { g_vbl++; }
+
+#if defined(RATE_PROBE)
+/* IS-Viewer write used by the rate probe from outside game_init().  The
+ * IS-Viewer window accepts 32-BIT WRITES ONLY — byte stores silently drop
+ * three of every four characters (see the probe preamble in game_init). */
+static void rate_isv(const char *s) {
+    uint32_t n = (uint32_t)strlen(s), w = (n + 3) & ~3u;
+    for (uint32_t i = 0; i < w; i += 4) {
+        uint32_t v = 0;
+        for (int b = 0; b < 4; b++) {
+            uint32_t c = (i + b < n) ? (uint8_t)s[i + b] : 0;
+            v |= c << (24 - 8 * b);
+        }
+        *(volatile uint32_t *)(uintptr_t)(0xB3FF0020ul + i) = v;
+    }
+    *(volatile uint32_t *)(uintptr_t)(0xB3FF0014ul) = n;
+}
+#endif
+
 // ─── Per-frame generation (one token per frame) ───────────────────────────────
 
 static void update_generating_step(void) {
@@ -1466,11 +1512,19 @@ static void update_generating_step(void) {
                 }
                 G.dialog_char = G.dialog_len;
 
-                /* Compute RPC latency */
-                uint32_t now_us = CYCLES_TO_US(TICKS_READ());
-                G.perf_gen_total_us = now_us - G.rpc_send_us;
-                if (G.perf_gen_total_us > 1000) {
-                    G.perf_toks_precise = (float)G.dialog_len * 1000000.0f / (float)G.perf_gen_total_us;
+                /* Compute RPC latency against the vblank (wall clock), not
+                 * CP0.  NOTE WHAT THIS NUMBER IS: chars returned divided by
+                 * the bridge round trip.  That is the THROUGHPUT OF THE HOST
+                 * LLM plus the link, measured by the N64 — it is not the
+                 * speed of anything running on the N64, which in this build
+                 * is doing no inference at all.  Anyone quoting it as an N64
+                 * tok/s figure is quoting a PC. */
+                uint32_t elapsed_vbl = g_vbl - G.perf_gen_start_vbl;
+                G.perf_gen_total_us = (uint32_t)((float)elapsed_vbl
+                                                 * (1000000.0f / g_vi_hz));
+                if (elapsed_vbl > 0) {
+                    G.perf_toks_precise = (float)G.dialog_len * g_vi_hz
+                                        / (float)elapsed_vbl;
                     G.gen_toks_sec = G.perf_toks_precise;
                 }
                 G.perf_cpu_pct = 5.0f;  /* RPC = minimal CPU usage */
@@ -1583,15 +1637,42 @@ static void update_generating_step(void) {
             G.dialog_char = G.dialog_len;   // show immediately
         }
 
-        // Update tok/s — precise using CP0 cycle counter
+        // Update tok/s — measured against the VI vblank, i.e. WALL CLOCK.
+        // See the timebase note above update_generating_step() for why CP0
+        // COUNT is not an acceptable denominator here.
         {
-            uint32_t now_us = CYCLES_TO_US(TICKS_READ());
-            uint32_t elapsed_us = now_us - G.perf_gen_start_us;
-            if (elapsed_us > 1000) {  // at least 1ms elapsed
-                G.perf_toks_precise = (float)G.gen_out_count * 1000000.0f / (float)elapsed_us;
-                G.gen_toks_sec = G.perf_toks_precise;
-                G.perf_gen_total_us = elapsed_us;
+            uint32_t elapsed_vbl = g_vbl - G.perf_gen_start_vbl;
+            if (elapsed_vbl > 0) {
+                G.perf_toks_precise = (float)G.gen_out_count * g_vi_hz
+                                    / (float)elapsed_vbl;
+                G.gen_toks_sec      = G.perf_toks_precise;
+                G.perf_gen_total_us = (uint32_t)((float)elapsed_vbl
+                                                 * (1000000.0f / g_vi_hz));
             }
+
+            // Cross-check only: the same rate off CP0 COUNT.  Kept so the two
+            // clocks can be compared on any target without a rebuild.  Not
+            // displayed.
+            {
+                uint32_t now_us     = CYCLES_TO_US(TICKS_READ());
+                uint32_t elapsed_us = now_us - G.perf_gen_start_us;
+                if (elapsed_us > 1000)
+                    G.perf_toks_cp0 = (float)G.gen_out_count * 1000000.0f
+                                    / (float)elapsed_us;
+            }
+#ifdef RATE_PROBE
+            {
+                char rl[128];
+                sprintf(rl, "RATE HUD n=%d vbl=%u toks_vbl=%d.%02d "
+                            "toks_cp0=%d.%02d\n",
+                        G.gen_out_count, (unsigned)elapsed_vbl,
+                        (int)G.perf_toks_precise,
+                        (int)((G.perf_toks_precise - (int)G.perf_toks_precise) * 100.0f),
+                        (int)G.perf_toks_cp0,
+                        (int)((G.perf_toks_cp0 - (int)G.perf_toks_cp0) * 100.0f));
+                rate_isv(rl);
+            }
+#endif
             // CPU% = inference cycles / frame cycles
             // Average over frames since gen started
             int frames_elapsed = G.frame - G.gen_start_frame;
@@ -1633,9 +1714,11 @@ static void start_dialog_from_prompt(int npc_idx, const char *prompt, int use_pe
     G.gen_toks_sec    = 0.0f;
     G.perf_gen_cycles   = 0;
     G.perf_gen_total_us = 0;
-    G.perf_gen_start_us = CYCLES_TO_US(TICKS_READ());
+    G.perf_gen_start_us  = CYCLES_TO_US(TICKS_READ());
+    G.perf_gen_start_vbl = g_vbl;
     G.perf_cpu_pct      = 0.0f;
     G.perf_toks_precise = 0.0f;
+    G.perf_toks_cp0     = 0.0f;
     G.perf_show         = 1;
 #ifdef USE_RPC_LLM
     G.rpc_pending       = 0;
@@ -2023,6 +2106,11 @@ int main(void) {
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_RESAMPLE);
     controller_init();
     timer_init();
+    /* Wall-clock timebase for the tok/s counter.  Must come after
+     * display_init(), which is what starts the VI scanning out and therefore
+     * what makes the vblank interrupt fire. */
+    g_vi_hz = (get_tv_type() == TV_PAL) ? 50.00f : 59.94f;
+    register_VI_handler(vbl_counter);
     dfs_init(DFS_DEFAULT_LOCATION);
     rdpq_init();
     audio_init(MUSIC_FREQ, 4);   // 22kHz, 4 buffers for smooth square-wave
