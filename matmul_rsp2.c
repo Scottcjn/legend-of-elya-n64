@@ -232,26 +232,58 @@ void rsp2_weights_ready(void *base, unsigned long bytes)
 /* ---------------------------------------------------------------------------
  * The matmul itself.
  * ------------------------------------------------------------------------- */
+
+/* Split-dispatch state.  One outstanding dispatch at a time: rsp2_xi,
+ * rsp2_params and rsp2_rb are single static buffers, so a second begin()
+ * before the matching end() would overwrite the first one's inputs. */
+uint32_t rsp_t_wait   = 0;
+uint32_t rsp_n_free   = 0;
+uint32_t rsp_n_blocked = 0;
+static int   mm_pending  = 0;     /* 1 = dispatched, end() not yet called */
+static int   mm_zero     = 0;     /* activation vector was all zeros       */
+static float mm_sx       = 0.0f;  /* activation quantization scale         */
+#ifdef RSP_MM_OVERLAY
+static rspq_syncpoint_t mm_sync;
+#endif
+
+int rsp_matmul_pending(void) { return mm_pending; }
+
+int rsp_matmul_done(void)
+{
+    if (!mm_pending) return 1;
+    if (mm_zero)     return 1;
+#ifdef RSP_MM_OVERLAY
+    return rspq_syncpoint_check(mm_sync) ? 1 : 0;
+#else
+    /* The standalone kernel has no queue: rsp_run() already blocked. */
+    return 1;
+#endif
+}
+
 void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
                    const float *input, float *output,
                    int in_dim, int out_dim, int bits)
 {
-    const int nsb = in_dim >> 8;
+    if (rsp_matmul_begin(weights, input, in_dim, out_dim, bits)) {
+        rsp_matmul_end(scales, output, in_dim, out_dim, bits);
+        return;
+    }
+    rsp_matmul_cpu(weights, scales, input, output, in_dim, out_dim, bits);
+}
 
-    int shape_ok = (rsp2_ready && (bits == 8 || bits == 2) &&
-                    !(in_dim & 255) && in_dim <= RSP2_MAX_IN &&
-                    out_dim <= RSP2_MAX_OUT);
-#ifdef RSP_MM_OVERLAY
-    /* The overlay only gets the DMEM rspq does not need, so a shape can be
-     * arithmetically fine and still not fit.  Decide that here, not after
-     * we have already staged the activations. */
-    mm_plan_t plan = { 0, 0, 0, 0 };
-    if (shape_ok)
-        shape_ok = rsp2_plan(in_dim, (bits == 8) ? in_dim : (in_dim / 4),
-                             nsb * 64, out_dim, &plan);
-#endif
-
-    if (!shape_ok) {
+/* The exact CPU fallback, in the same block-hoisted form as nano_gpt.c.
+ *
+ * NOTE it reads the UNPERMUTED weight layout.  sgai_init() permutes every
+ * tensor it hands to the RSP, so this path is only correct for a tensor that
+ * was never permuted -- which is every tensor the RSP cannot tile, and none
+ * that it can.  Measured: `RSPPATH rsp=... cpu=0` on every run in FINDINGS,
+ * i.e. it has never once been taken on this model.  Kept, and kept honest by
+ * rsp_mm_calls_cpu, which is printed by the probes. */
+void rsp_matmul_cpu(const uint8_t *weights, const uint16_t *scales,
+                    const float *input, float *output,
+                    int in_dim, int out_dim, int bits)
+{
+    {
         rsp_mm_calls_cpu++;
         /* Exact CPU fallback, same block-hoisted form as nano_gpt.c. */
         const int nblk = in_dim / SGAI_Q_BLOCK;
@@ -285,9 +317,30 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
         }
         return;
     }
+}
+
+int rsp_matmul_begin(const uint8_t *weights, const float *input,
+                     int in_dim, int out_dim, int bits)
+{
+    const int nsb = in_dim >> 8;
+
+    int shape_ok = (rsp2_ready && (bits == 8 || bits == 2) &&
+                    !(in_dim & 255) && in_dim <= RSP2_MAX_IN &&
+                    out_dim <= RSP2_MAX_OUT);
+#ifdef RSP_MM_OVERLAY
+    /* The overlay only gets the DMEM rspq does not need, so a shape can be
+     * arithmetically fine and still not fit.  Decide that here, not after
+     * we have already staged the activations. */
+    mm_plan_t plan = { 0, 0, 0, 0 };
+    if (shape_ok)
+        shape_ok = rsp2_plan(in_dim, (bits == 8) ? in_dim : (in_dim / 4),
+                             nsb * 64, out_dim, &plan);
+#endif
+    if (!shape_ok) return 0;
 
     rsp_mm_calls_rsp++;
-    uint32_t _c0, _c1, _c2, _c3;
+    mm_pending = 1;
+    uint32_t _c0, _c1, _c2;
     CP0_RD(_c0);
 
     /* ---- quantize the activation vector -------------------------------- */
@@ -299,10 +352,16 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
     }
     const float xmax = (bits == 8) ? XMAX_INT8 : XMAX_TERN;
     if (amax < 1e-20f) {
-        for (int o = 0; o < out_dim; o++) output[o] = 0.0f;
-        return;
+        /* Nothing is dispatched, but the call is still "pending" so that
+         * end() writes the zeros.  done() reports true immediately. */
+        mm_zero = 1;
+        CP0_RD(_c1);
+        rsp_t_stage += _c1 - _c0;
+        return 1;
     }
+    mm_zero = 0;
     const float sx = xmax / amax;
+    mm_sx = sx;
 
     /* ---- stage it in the kernel's lane order ---------------------------- */
     /* xi[sb*256 + k*8 + b] = xq[sb*256 + b*32 + k] */
@@ -368,25 +427,56 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
     /* A syncpoint, not rspq_wait().  rspq_wait() additionally blocks until
      * the RDP has finished drawing, which is harmless in the headless probe
      * (no RDP work) but would serialise every matmul against the frame in
-     * the actual game.  A syncpoint waits for exactly our command. */
-    rspq_syncpoint_wait(rspq_syncpoint_new());
+     * the actual game.  A syncpoint waits for exactly our command.
+     *
+     * Created here and waited on in end(), NOT waited on here: the whole
+     * point of the split is that the CPU leaves with the RSP still running. */
+    mm_sync = rspq_syncpoint_new();
 #else
     rsp_load_data(rsp2_xi, (unsigned long)(in_dim * 2), DM_XI);
     rsp_load_data(rsp2_params, 64, 0);
-    rsp_run();
+    rsp_run();                       /* the standalone kernel blocks here */
 #endif
 
     CP0_RD(_c2);
     rsp_n_wdma += (uint32_t)out_dim;
     rsp_b_w    += (uint32_t)(((size_t)out_dim * (row_bytes + 8)) >> 10);
     rsp_b_out  += (uint32_t)(((size_t)out_dim * out_row_b) >> 10);
+    rsp_t_stage += _c1 - _c0;
+    rsp_t_disp  += _c2 - _c1;
+    return 1;
+}
+
+void rsp_matmul_end(const uint16_t *scales, float *output,
+                    int in_dim, int out_dim, int bits)
+{
+    const int nsb = in_dim >> 8;
+    const int out_row_b = nsb * 64;
+    uint32_t _c2, _c2b, _c3;
+
+    mm_pending = 0;
+    if (mm_zero) {
+        for (int o = 0; o < out_dim; o++) output[o] = 0.0f;
+        return;
+    }
+
+    CP0_RD(_c2);
+#ifdef RSP_MM_OVERLAY
+    if (rspq_syncpoint_check(mm_sync)) rsp_n_free++;
+    else                               rsp_n_blocked++;
+    rspq_syncpoint_wait(mm_sync);
+#else
+    rsp_n_free++;                    /* rsp_run() already blocked in begin() */
+#endif
+    CP0_RD(_c2b);
+    rsp_t_wait += _c2b - _c2;
 
     data_cache_hit_writeback_invalidate(rsp2_rb,
         (unsigned long)((size_t)out_dim * out_row_b));
 
     /* ---- epilogue: one float multiply per 32-weight block ---------------- */
     const int nblk = in_dim / SGAI_Q_BLOCK;
-    const float inv = 1.0f / (((bits == 8) ? K_INT8 : K_TERN) * sx);
+    const float inv = 1.0f / (((bits == 8) ? K_INT8 : K_TERN) * mm_sx);
     for (int o = 0; o < out_dim; o++) {
         const int16_t  *base = rsp2_rb + (size_t)o * nsb * 32;
         const uint16_t *rs   = scales  + (size_t)o * nblk;
@@ -405,7 +495,5 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
         output[o] = acc * inv;
     }
     CP0_RD(_c3);
-    rsp_t_stage += _c1 - _c0;
-    rsp_t_disp  += _c2 - _c1;
-    rsp_t_epi   += _c3 - _c2;
+    rsp_t_epi += _c3 - _c2b;
 }

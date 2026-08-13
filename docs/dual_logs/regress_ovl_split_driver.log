@@ -1,0 +1,16 @@
+     1.648  Loaded regress_ovl
+     2.174  Vulkan Enabled: using paraLLEl-RDP
+     3.014  RATE INIT rdy=1 bits=2 ctx=128 vi_hz_x100=5994 tv=1
+     3.014  RATE A_START
+    13.408  RATE A cp0=234375001 vbl=299 cp0_sec_x1000=5000 vbl_sec_x1000=4988
+    13.408  RATE A_END
+    32.375  RATE B PROMPT toks=25 cp0=499248297 vbl=638
+    32.375  RATE B_START
+    43.032  RATE B toks=16 cp0=342959075 vbl=437
+    43.033  RATE B tps_cp0_x1000=2186 tps_vbl_x1000=2194
+    43.033  RATE B TEXT all me Sophia El
+    43.033  RATE B_END
+    43.033  RATE RSPPATH rsp=1968 cpu=0
+    43.033  RATE_DONE
+HOSTCLOCK phase A: 10.394 s wall
+HOSTCLOCK phase B: 10.658 s wall
