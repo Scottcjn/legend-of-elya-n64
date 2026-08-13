@@ -1578,6 +1578,21 @@ static void update_generating_step(void) {
             // DO NOT overwrite it — that prediction seeds the first output token.
             G.gen_start_frame = G.frame;
             G.gen_out_count   = 0;
+            /* Restart the rate clock here, where the OUTPUT phase begins.
+             * The numerator counts output tokens only, so the denominator
+             * must cover the output interval only.  Timing from
+             * start_dialog_from_prompt() instead put the whole prompt
+             * ingestion into the denominator of a count that excludes it,
+             * which makes the readout a cumulative average that starts near
+             * zero and creeps upward, never reaching the real rate: 0.54 tok/s
+             * displayed against 1.23 tok/s actual, on the shipped ternary
+             * build, because ingesting the 25-token persona-prefixed prompt
+             * costs 20 s before the first output token exists.  Under-
+             * reporting by 2.3x is still misreporting.  Prompt ingestion is a
+             * real cost and is quoted separately in the README, not smuggled
+             * into a number labelled tok/s. */
+            G.perf_gen_start_vbl = g_vbl;
+            G.perf_gen_start_us  = CYCLES_TO_US(TICKS_READ());
 #ifdef SGAI_EMIT_FIRST_TOKEN
             /* ...and it is also the FIRST CHARACTER OF THE ANSWER.  Phase 1
              * feeds it back (correctly) but only ever appends the token that
