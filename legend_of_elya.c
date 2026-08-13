@@ -1689,6 +1689,21 @@ static void update_generating_step(void) {
             filter_dialog_buf();   /* strip training artifacts (helpmeet etc.) */
             G.dialog_done = 1;
             G.state = STATE_DIALOG;
+#ifdef RATE_PROBE
+            {
+                char rl[192];
+                sprintf(rl, "RATE HUD FINAL out=%d chars=%d vbl=%u "
+                            "toks_vbl_x1000=%u toks_cp0_x1000=%u\n",
+                        G.gen_out_count, G.dialog_len,
+                        (unsigned)(g_vbl - G.perf_gen_start_vbl),
+                        (unsigned)(G.perf_toks_precise * 1000.0f),
+                        (unsigned)(G.perf_toks_cp0 * 1000.0f));
+                rate_isv(rl);
+                sprintf(rl, "RATE HUD TEXT %s\n", (char *)G.dialog_buf);
+                rate_isv(rl);
+                rate_isv("RATE_INGAME_DONE\n");
+            }
+#endif
         }
     }
 }
@@ -1914,7 +1929,7 @@ static void game_init(void) {
         }
     }
 
-#if defined(COH_PROBE) || defined(BOOT_PROBE) || defined(GAME12_PROBE)
+#if defined(COH_PROBE) || defined(BOOT_PROBE) || defined(GAME12_PROBE) || defined(RATE_PROBE)
 /* Two headless verification probes share this IS-Viewer preamble.
  * Each body is separately gated below and only one builds at a time. */
     /* COH_PROBE — coherence/throughput probe.  Runs inside game_init() because
@@ -1987,6 +2002,135 @@ static void game_init(void) {
         while (1) { }
     }
 #endif /* COH_PROBE */
+
+#ifdef RATE_PROBE
+        /* RATE_PROBE — settle, by experiment, which clock is telling the
+         * truth, and then quote a tok/s off the one that is.
+         *
+         * Three clocks are in play and they are not the same thing:
+         *   CP0 COUNT  emulated CPU cycles      (synthetic under an emulator)
+         *   VI vblank  emulated field rate      (59.94 Hz by video standard)
+         *   host clock real seconds             (measured outside, by the runner,
+         *                                        from the timestamps on these lines)
+         * On silicon all three agree by construction.  Any disagreement here
+         * is the emulator, and says which number may be quoted.
+         *
+         * The probe runs inside game_init(), i.e. after main()'s
+         * display_init() and register_VI_handler() but before the first frame
+         * is rendered, so the vblank counter is already live.  */
+#ifndef RATE_A_SEC
+#define RATE_A_SEC 5u
+#endif
+#ifndef RATE_NGEN
+#define RATE_NGEN 16
+#endif
+#ifndef RATE_TEMP
+#define RATE_TEMP 64      /* the temperature the game generates output at */
+#endif
+#ifndef RATE_PROMPT
+#define RATE_PROMPT "sage says: Who are you?: "
+#endif
+        sprintf(pl, "RATE INIT rdy=%d bits=%d ctx=%d vi_hz_x100=%d tv=%d\n",
+                G.ai_ready, G.ai.w_bits, (int)SGAI_CTX,
+                (int)(g_vi_hz * 100.0f), (int)get_tv_type());
+        ISV(pl);
+
+        /* ---- Phase A: does CP0 COUNT advance against the VI clock? --------
+         * Burn exactly RATE_A_SEC seconds of CP0 time in a spin loop and
+         * count how many vblanks elapse.  On hardware, and on any emulator
+         * whose CP0 tracks its VI, that is RATE_A_SEC * 59.94 vblanks.
+         * A ratio far from 1.0 means one of the two is fabricated.
+         * The spin loop is deliberately dumb: it must not be optimised into
+         * something with a different cycle cost than the code being timed —
+         * it only has to consume CP0 counts. */
+        ISV("RATE A_START\n");
+        {
+            uint32_t a0, a1, v0, v1;
+            const uint32_t target = 46875000u * RATE_A_SEC;
+            v0 = g_vbl;
+            asm volatile("mfc0 %0, $9" : "=r"(a0));
+            do {
+                asm volatile("mfc0 %0, $9" : "=r"(a1));
+            } while ((uint32_t)(a1 - a0) < target);
+            v1 = g_vbl;
+            sprintf(pl, "RATE A cp0=%u vbl=%u cp0_sec_x1000=%u vbl_sec_x1000=%u\n",
+                    (unsigned)(a1 - a0), (unsigned)(v1 - v0),
+                    (unsigned)((uint64_t)(a1 - a0) * 1000u / 46875000u),
+                    (unsigned)((uint64_t)(v1 - v0) * 100000u
+                               / (uint32_t)(g_vi_hz * 100.0f)));
+            ISV(pl);
+        }
+        ISV("RATE A_END\n");
+
+        /* ---- Phase B: the actual generation rate, on both clocks ---------
+         * The real sampling path, the real prompt shape, the real output
+         * temperature.  CP0 is accumulated PER TOKEN into 64 bits: the raw
+         * register is 32 bits and wraps every 91.6 s, which a slow build
+         * generating 16 tokens can exceed. */
+        if (G.ai_ready) {
+            const char *p0 = RATE_PROMPT;
+            int P = (int)strlen(p0);
+            static char out[RATE_NGEN + 1];
+            uint64_t cp0_cum = 0;
+            uint32_t t0, t1, vb0, vb1;
+            uint8_t tok = 0;
+
+            sgai_reset(&G.ai);
+            for (int i = 0; i < P; i++)
+                tok = sgai_next_token(&G.ai, (uint8_t)p0[i], 0);
+
+            ISV("RATE B_START\n");
+            vb0 = g_vbl;
+            for (int i = 0; i < RATE_NGEN; i++) {
+                asm volatile("mfc0 %0, $9" : "=r"(t0));
+                tok = sgai_next_token(&G.ai, tok, RATE_TEMP);
+                asm volatile("mfc0 %0, $9" : "=r"(t1));
+                cp0_cum += (uint32_t)(t1 - t0);
+                out[i] = (char)tok;
+            }
+            vb1 = g_vbl;
+            out[RATE_NGEN] = 0;
+
+            /* tok/s * 1000, integer, so no float formatting is involved */
+            sprintf(pl, "RATE B toks=%d cp0=%llu vbl=%u\n",
+                    RATE_NGEN, (unsigned long long)cp0_cum,
+                    (unsigned)(vb1 - vb0));
+            ISV(pl);
+            sprintf(pl, "RATE B tps_cp0_x1000=%u tps_vbl_x1000=%u\n",
+                    (unsigned)(cp0_cum ? (uint64_t)RATE_NGEN * 46875000ull * 1000ull
+                                         / cp0_cum : 0u),
+                    (unsigned)((vb1 - vb0) ? (uint64_t)RATE_NGEN
+                                             * (uint32_t)(g_vi_hz * 1000.0f)
+                                             / (vb1 - vb0) : 0u));
+            ISV(pl);
+            sprintf(pl, "RATE B TEXT %s\n", out); ISV(pl);
+        }
+        ISV("RATE B_END\n");
+
+#ifdef USE_RSP_MATMUL
+        { extern uint32_t rsp_mm_calls_rsp, rsp_mm_calls_cpu;
+          sprintf(pl, "RATE RSPPATH rsp=%u cpu=%u\n",
+                  (unsigned)rsp_mm_calls_rsp, (unsigned)rsp_mm_calls_cpu);
+          ISV(pl); }
+#endif
+        ISV("RATE_DONE\n");
+#ifndef RATE_INGAME
+        while (1) { }
+#else
+        /* ---- Phase C: the SHIPPED counter, in the real game loop ---------
+         * Fall through into main()'s render loop with a generation already
+         * started, so update_generating_step() runs once per vsync-locked
+         * frame exactly as it does for a player.  Its RATE_PROBE block prints
+         * one "RATE HUD" line per token carrying both the displayed
+         * (vblank) rate and the old CP0 rate.  This is what is on screen.
+         *
+         * Uses the game's own first dialogue option through the game's own
+         * entry point, persona prefix and all, so the measured path is the
+         * player's path and not a probe-shaped imitation of it. */
+        start_dialog_from_prompt(0, NPC_DIALOG_OPTIONS[0][0], 1);
+#endif
+    }
+#endif /* RATE_PROBE */
 
 #ifdef BOOT_PROBE
         sprintf(pl, "BOOT rdy=%d bits=%d bufbytes=%d ctx=%d failsz=%d cap=%d\n",
