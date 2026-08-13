@@ -1452,6 +1452,22 @@ static void draw_text(surface_t *disp) {
  * this reason.  A visible consequence there, and here, is that the reported
  * rate is quantised to VI_HZ/k for integer k — which is itself the evidence
  * that the number came off a clock rather than out of arithmetic. */
+/* MEASURED CAVEAT on the constant below (docs/N64_RATE_FINDINGS.md F-RT010):
+ * 59.94 Hz is the NTSC video standard, and it is what this build assumes.
+ * ares does not emit exactly that.  Spinning a known number of CP0 counts and
+ * counting the vblanks that elapse, at five durations:
+ *
+ *      1 s      60 vbl      5 s     299 vbl     20 s   1,197 vbl
+ *     28.4 s 1,698 vbl     90 s   5,385 vbl
+ *
+ * gives 5,385 / 90.0000 s = 59.833 +- 0.011 Hz.  The residual against 59.94
+ * settles at -0.18 % as the +-1-vblank quantisation shrinks, and does NOT grow
+ * with duration, so it is a constant rate offset and not drift: the two clocks
+ * inside the emulator hold a fixed ratio.  A vblank-derived rate is therefore
+ * 0.18 % high under ares, which is why nothing here is quoted past three
+ * significant figures.  Which of the two is off relative to silicon cannot be
+ * settled without silicon, so the standard value is kept and the offset is
+ * documented rather than tuned away. */
 static volatile uint32_t g_vbl = 0;      /* incremented by the VI interrupt */
 static float            g_vi_hz = 59.94f; /* set from get_tv_type() in main() */
 

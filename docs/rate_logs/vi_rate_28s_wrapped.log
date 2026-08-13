@@ -1,0 +1,15 @@
+     1.405  Loaded rate_a120
+     1.916  Vulkan Enabled: using paraLLEl-RDP
+     2.281  RATE INIT rdy=1 bits=2 ctx=128 vi_hz_x100=5994 tv=1
+     2.281  RATE A_START
+    48.490  RATE A cp0=1330032704 vbl=1698 cp0_sec_x1000=28374 vbl_sec_x1000=28328
+    48.490  RATE A_END
+    84.367  RATE B PROMPT toks=25 cp0=913838941 vbl=1166
+    84.367  RATE B_START
+    86.353  RATE B toks=1 cp0=37293247 vbl=48
+    86.353  RATE B tps_cp0_x1000=1256 tps_vbl_x1000=1248
+    86.354  RATE B TEXT a
+    86.354  RATE B_END
+    86.354  RATE_DONE
+HOSTCLOCK phase A: 46.209 s wall
+HOSTCLOCK phase B: 1.986 s wall

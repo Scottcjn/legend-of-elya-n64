@@ -97,18 +97,17 @@ RATE A cp0=234375000 vbl=299 cp0_sec_x1000=5000 vbl_sec_x1000=4988
 | CP0 COUNT | 234,375,000 counts @ 46.875 MHz | 5.0000 |
 | VI vblank | 299 fields @ 59.94 Hz | 4.9883 |
 
-**Disagreement 0.23 %, and it is entirely the resolution of the experiment.**
-5.0000 s at 59.94 Hz is 299.7 vblanks; only whole vblanks can be counted and
-the spin starts at an arbitrary phase, so 299 is the nearest observable
-integer. One vblank is 0.33 % at this duration — the disagreement is smaller
-than the smallest quantity the vblank clock can express.
-
-Identical in all four runs (two builds x headless/in-game), and the RSP build
-reads `cp0=234375001` for the same 299 vblanks.
+**Disagreement 0.23 %**, at a duration where one vblank is 0.33 % — smaller
+than the smallest quantity the vblank clock can express. Identical in all four
+runs (two builds x headless/in-game); the RSP build reads `cp0=234375001` for
+the same 299 vblanks.
 
 **So the emulator is not the culprit.** ares's CP0 tracks its VI. That matters
 more than the counter bug does, because it means every CP0-derived measurement
 in `docs/` and `FINDINGS.md` stands.
+
+The 0.23 % does not entirely vanish at longer durations, though, and what is
+left of it is a different (much smaller) thing — F-RT010.
 
 ### The third clock
 
@@ -306,6 +305,45 @@ README table had been describing the v5 model in `weights/sophia_weights.bin`
 while the ROM loaded `filesystem/sophia_weights.bin`. Two different files, one
 table. Corrected in README.
 
+## F-RT010 — what is left of the 0.23 %: ares's field rate is 59.83 Hz, not 59.94
+
+F-RT003 answered the question that was asked (does CP0 advance against wall
+clock — yes). It left a 0.23 % residual attributed to +-1-vblank quantisation.
+Most of it is that. Not all of it, and a number I cannot explain is not a
+result, so the spin was repeated at five durations.
+
+| CP0 target | CP0 counts | -> s | vblanks | expected @ 59.94 | residual | implied Hz |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 s | 46,875,001 | 1.0000 | 60 | 59.94 | +0.10 % | 60.00 |
+| 5 s | 234,375,000 | 5.0000 | 299 | 299.70 | -0.234 % | 59.80 |
+| 20 s | 937,500,000 | 20.0000 | 1,197 | 1,198.80 | -0.150 % | 59.85 |
+| 28.4 s | 1,330,032,704 | 28.3740 | 1,698 | 1,700.9 | -0.170 % | 59.844 |
+| **90 s** | **4,218,750,002** | **90.0000** | **5,385** | **5,394.6** | **-0.178 %** | **59.833** |
+
+The residual **settles** at -0.18 % instead of shrinking to zero, and it does
+not grow with duration. That is the signature of a constant rate offset, not of
+drift: a clock running fast would accumulate error linearly, and this does not.
+The +0.10 % at 1 s and -0.23 % at 5 s are the +-1-vblank floor (+-1.7 % and
++-0.33 % respectively) swamping a -0.18 % signal.
+
+**ares emits 5,385 fields in 90.0000 s of CP0 time = 59.833 +- 0.011 Hz.**
+That excludes 59.94 by ten times the uncertainty. It sits on the ~59.83 Hz
+figure for a real N64's NTSC progressive output, which is *not* the 60/1.001
+of the broadcast standard the ROM's constant assumes.
+
+Consequences, stated rather than tuned away:
+
+- Every vblank-derived rate in this document is **0.18 % high**, because
+  `g_vi_hz` is 59.94. 1.232 becomes 1.230; 2.189 becomes 2.185. Nothing
+  quoted here to three significant figures moves.
+- The CP0 and vblank columns of F-RT005 agree to 0.2 %, and this is why: it is
+  not noise, it is this constant.
+- Which of ares's two clocks is off *relative to silicon* cannot be settled
+  without silicon. The ROM keeps the standard 59.94 and prints both clocks, so
+  an EverDrive 64 run resolves it in one line of output.
+- Nothing anywhere in this repo should be quoted past three significant
+  figures until that run happens.
+
 ---
 
 # Summary
@@ -320,6 +358,7 @@ table. Corrected in README.
 | RSP speedup on the shipped blob | **1.78x** (not 4.769x — that is CP0 cycles on the int8 blob) |
 | Prompt ingestion | 19.5 s scalar / 10.6 s RSP for 25 tokens, quoted separately |
 | Is the blob an 8-expert mixture? | **No.** 8 layers, dense, sequential. The MoE cache is unwired. |
+| Do the two clocks agree exactly? | To 0.18 %. ares's field rate measures 59.833 +- 0.011 Hz, not the 59.94 the ROM assumes (F-RT010). Quote nothing past 3 significant figures. |
 
 ## What could not be done
 
