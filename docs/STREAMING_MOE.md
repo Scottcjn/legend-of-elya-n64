@@ -1,5 +1,20 @@
 # Streaming MoE on the N64 — the richer half of the Lock-On idea
 
+> **STATUS: DESIGN ONLY — NOT SHIPPED, NOT BUILT.** `src/expert_cache.c` is real
+> and compiles, but it appears in no Makefile target and is `#include`d by
+> nothing. The ROM ships a **dense 8-layer transformer** that runs every layer
+> on every token; there is no router, no expert selection, and no expert-count
+> field in the weight format. If you are here because the blob's size factors as
+> `12 + 65,536 + 8*196,608 + 8*49,152`, the 8 is the **layer count** — byte 4 of
+> the blob header — not an expert count. Check it with
+> `python3 scripts/blob_layout.py filesystem/sophia_weights.bin`, and see
+> `docs/N64_RATE_FINDINGS.md` F-RT009.
+>
+> The "819K params (Q8)" and "858 KB" expert sizes below describe the v5 model
+> that was current when this design was written. The shipped model is
+> 6,356,992 ternary parameters in 2,031,628 bytes, so the capacity arithmetic
+> here would need redoing before anyone builds it.
+
 The Genesis version (`legend-of-elya-genesis/docs/LOCKON_MOE.md`) shards
 experts across cartridge ROM and activates one with a pointer repoint.
 Correcting an earlier claim of mine: **the N64 can do this too, and it can

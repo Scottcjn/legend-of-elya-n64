@@ -1,11 +1,13 @@
 # Contributing to Legend of Elya (N64)
 
-Thank you for your interest in contributing to Legend of Elya — an N64 game featuring a real 819K-parameter transformer running on the VR4300 MIPS III CPU!
+Thank you for your interest in contributing to Legend of Elya — an N64 game featuring a real 6.36M-parameter transformer running on the VR4300 MIPS III CPU!
 
 ## About This Project
 
 Legend of Elya pushes the boundaries of what's possible on vintage hardware:
-- Real transformer inference at 60 tok/s on Nintendo 64
+- Real transformer inference at 1.23 tok/s on Nintendo 64 (2.19 tok/s on the RSP build)
+  — measured under ares against the video vertical blank; see *The tok/s counter
+  was wrong* in the README for why an earlier 60 tok/s figure was withdrawn
 - Zelda-style dungeon exploration
 - AI-powered NPCs using byte-level neural networks
 - Built with libdragon SDK
@@ -140,10 +142,13 @@ python tools/convert_model.py \
 
 ### Model Constraints
 
-- Maximum model size: ~2MB (compressed)
-- Supported architectures: 819K parameters max
-- Quantization: 8-bit weights recommended
-- No floating-point unit on VR4300 (use fixed-point)
+- Maximum model size: ~2MB (the shipped ternary blob is 2,031,628 B)
+- Shipped model: 6,356,992 parameters, 8 layers, dim 256, context 128
+- Quantization: ternary (2-bit) shipped; the loader also accepts 3..8-bit SEQn
+  and the legacy SEAI int8 format
+- The VR4300 **does** have an FPU and the engine uses IEEE float32 throughout;
+  what it lacks is `trunc.w.s`, which is why `exp()` is a Taylor series with no
+  float-to-int casts
 
 ## Testing
 
