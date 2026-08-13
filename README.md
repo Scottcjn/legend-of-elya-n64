@@ -111,12 +111,14 @@ The old expression is evaluated alongside the new one, on the same tokens, in th
 same run, under the same emulator (`make base EXTRA="-DRATE_PROBE -DRATE_INGAME"`):
 
 ```
-RATE HUD n=1  vbl=47  toks_vbl=1.27  toks_cp0=1.25  toks_legacyframe=60.00
-RATE HUD n=9  vbl=434 toks_vbl=1.24  toks_cp0=1.24  toks_legacyframe=60.00
-RATE HUD n=19 vbl=930 toks_vbl=1.22  toks_cp0=1.22  toks_legacyframe=60.00
+RATE HUD n=1  vbl=48  toks_vbl=1.24  toks_cp0=1.24  toks_legacyframe=60.00
+RATE HUD n=10 vbl=485 toks_vbl=1.23  toks_cp0=1.23  toks_legacyframe=60.00
+RATE HUD n=19 vbl=934 toks_vbl=1.21  toks_cp0=1.22  toks_legacyframe=60.00
 ```
 
-`toks_legacyframe` is `60.00` on every token of every run. It is a constant.
+`toks_legacyframe` is `60.00` on every token of every run, on the scalar build and
+on the RSP build, while the real rate differs between those two by 1.8x. It is a
+constant. Full logs: [`docs/rate_logs/`](docs/rate_logs/).
 
 ### Was the emulator lying about the clock? No.
 
@@ -130,20 +132,33 @@ The experiment: burn a known number of CP0 counts in a spin loop, count the VI
 vblanks that elapse. Vblank is 59.94 Hz by video standard, not by opinion about CPU
 speed.
 
-| target | CP0 counts | → seconds | vblanks | → seconds | disagreement |
-|--------|-----------:|----------:|--------:|----------:|-------------:|
-| 1 s    |  46,875,000 |  1.0000  |      60 |   1.0010  | 0.10 % |
-| 5 s    | 234,375,000 |  5.0000  |     299 |   4.9883  | 0.23 % |
-| 5 s (RSP build) | 234,375,001 | 5.0000 | 299 | 4.9883 | 0.23 % |
+| CP0 target | CP0 counts | → seconds | vblanks | expected @ 59.94 | disagreement |
+|-----------:|-----------:|----------:|--------:|-----------------:|-------------:|
+| 1 s    |    46,875,001 |   1.0000 |     60 |    59.94 | +0.10 % |
+| 5 s    |   234,375,000 |   5.0000 |    299 |   299.70 | −0.23 % |
+| 20 s   |   937,500,000 |  20.0000 |  1,197 | 1,198.80 | −0.15 % |
+| 28.4 s | 1,330,032,704 |  28.3740 |  1,698 |  1,700.9 | −0.17 % |
+| 90 s   | 4,218,750,002 |  90.0000 |  5,385 |  5,394.6 | −0.18 % |
 
 The two clocks inside the emulated console agree to better than a quarter of a
-percent. The residual is the 60 Hz-vs-59.94 Hz rounding in the spin target, not
-drift.
+percent, and the disagreement **does not grow with duration** — a clock running
+fast would accumulate error linearly. So CP0 does not drift against wall clock.
+There is no fabricated denominator, and every CP0-derived number in `docs/`
+stands.
+
+What is left after quantisation is a constant −0.18 %, and it is not the CPU
+clock: 5,385 fields in 90.0000 s of CP0 time is **59.833 ± 0.011 Hz**, which
+excludes 59.94 by ten times the uncertainty and sits on a real N64's ~59.83 Hz
+NTSC progressive output rather than the 60/1.001 broadcast standard the ROM's
+constant assumes. Every vblank rate below is therefore 0.18 % high — 1.232
+becomes 1.230 — which is why nothing here is quoted past three significant
+figures. Details and the five runs: [`docs/N64_RATE_FINDINGS.md`
+F-RT010](docs/N64_RATE_FINDINGS.md).
 
 A third clock settles what the first two cannot, since both come from inside the
 emulated machine: the **host** clock, from `scripts/ares_rate_run.py`. 5.000
-emulated seconds took **9.334 host seconds** — headless ares runs this workload at
-about **0.54x real time**. That is the emulator being slow, which is honest and
+emulated seconds took **9.4–14.5 host seconds** across runs — headless ares runs
+this workload at **0.35–0.63x real time**, varying with load on the host GPU. That is the emulator being slow, which is honest and
 harmless: emulated time is faithful, so a rate derived from it is a rate the
 console would show. It is *host* wall clock that must not be quoted.
 
@@ -155,17 +170,17 @@ ares 147 headless. Both clocks quoted; both arms emit byte-identical text.
 
 | build | CP0 counts | vblanks | tok/s (CP0) | **tok/s (vblank)** | s/token |
 |-------|-----------:|--------:|------------:|-------------------:|--------:|
-| scalar CPU (`make base`) | 609,575,279 | 778 | 1.230 | **1.23** | 0.81 |
-| RSP overlay (`make base-rsp-ovl`) | 342,795,454 | 438 | 2.188 | **2.19** | 0.46 |
+| scalar CPU (`make base`) | 609,379,304 | 778 | 1.230 | **1.23** | 0.81 |
+| RSP overlay (`make base-rsp-ovl`) | 342,795,521 | 438 | 2.187 | **2.19** | 0.46 |
 
 Those are pure inference, headless. Driving the **real vsync-locked game loop**
 (`-DRATE_INGAME`, so the RDP renders a frame between tokens as it does for a
 player) costs a little more, and this is what is actually on screen:
 
-| build | in-game tok/s | vs headless |
-|-------|--------------:|------------:|
-| scalar CPU | **1.22** | −0.8 % |
-| RSP overlay | **2.16** | −1.4 % |
+| build | vblanks for 19 tokens | in-game tok/s | vs headless |
+|-------|----------------------:|--------------:|------------:|
+| scalar CPU | 934 | **1.22** | −1.1 % |
+| RSP overlay | 528 | **2.16** | −1.5 % |
 
 Both builds emit the same 19 characters, `Call me Sophia Elya`, in every arm above —
 the instrumentation changed no token.
@@ -181,9 +196,17 @@ Two things that number is not:
   cut the scalar path's work by more than half.
 - It is **not a real-hardware number**. See *What has not been checked* below.
 
-Prompt ingestion is quoted separately and is not folded into tok/s: the game's
-25-token persona-prefixed prompt costs **~20 s** (1,222 vblanks) on the scalar build
-before the first output token exists.
+Prompt ingestion is quoted separately and is not folded into tok/s. The game's
+25-token persona-prefixed prompt, before the first output character exists:
+
+| build | vblanks | seconds | s/token |
+|-------|--------:|--------:|--------:|
+| scalar CPU | 1,169 | **19.5** | 0.78 |
+| RSP overlay | 637 | **10.6** | 0.43 |
+
+Ingestion is slightly cheaper per token than generation (0.78 vs 0.81 s) because it
+runs at temperature 0 and skips the softmax and repetition penalty. That the two
+agree to 4 % is itself a check on the measurement.
 
 ### What the new counter does
 
@@ -203,9 +226,62 @@ rebuild. On the two builds above they agree to 0.19 % and 0.08 %.
 
 The denominator was also fixed to cover the output phase only. It previously ran
 from the start of prompt ingestion while the numerator counted output tokens only,
-which made the readout a cumulative average that crept upward and never arrived:
-**0.54 tok/s displayed against 1.23 actual**. Under-reporting by 2.3x is still
-misreporting.
+which made the readout a cumulative average that crept upward and never arrived.
+Both denominators are printed on the same tokens of the same run, so the size of
+that error is measured rather than argued:
+
+| build | output-phase (correct) | prompt-inclusive (old) | error |
+|-------|-----------------------:|-----------------------:|------:|
+| scalar CPU | **1.219 tok/s** | 0.539 tok/s | −2.26x |
+| RSP overlay | **2.156 tok/s** | 0.970 tok/s | −2.22x |
+
+Under-reporting by 2.3x is still misreporting.
+
+### Was ~60 tok/s ever physically possible? No
+
+Worth settling separately from where the number came from, because a figure that
+is merely wrong and one that is unreachable are different kinds of error.
+
+The model is dense — every one of its 6,356,992 parameters is read and multiplied
+once per token. At 93.75 MHz:
+
+| claim | cycles/token | cycles per parameter |
+|-------|-------------:|---------------------:|
+| 60 tok/s | 1,562,500 | **0.246** |
+| measured scalar, 1.23 tok/s | 76,172,413 | 12.0 |
+| measured RSP overlay, 2.19 tok/s | 42,849,440 | 6.7 |
+
+0.246 cycles per parameter is **four multiply-accumulates per clock** on a
+single-issue in-order scalar CPU that must also extract and sign-extend a 2-bit
+weight for each one. Not a hard target missed — not reachable in principle. Nor
+could the RSP have reached it, and the filmed build did not use the RSP: 8 lanes
+at 62.5 MHz is 500 M MAC/s, so 60 tok/s would be 76 % of the vector unit's
+theoretical peak with zero DMA, zero dispatch and zero CPU work.
+
+### The model in the table was the wrong model, too
+
+The counter audit turned up a second error one table away. The Architecture table
+above used to describe **819,200 parameters, 4 layers, embedding 128, Q8, 458 KB,
+context 64**. That is `weights/sophia_weights.bin`, a v5 reference file. The ROM
+loads `filesystem/sophia_weights.bin`, which is **6,356,992 parameters, 8 layers,
+embedding 256, ternary, 1,984 KB, context 128** — 7.8x the parameter count. Two
+different files, one table. The table now describes the shipped file.
+
+That also disposes of a suspicion raised while auditing: the blob's size,
+`2,031,628 = 12 + 65,536 + 8×196,608 + 8×49,152`, is **not** evidence of an
+8-expert mixture. The 8 is the layer count, and it is not inferred — it is byte 4
+of the blob's own header. Run it yourself:
+
+```
+python3 scripts/blob_layout.py filesystem/sophia_weights.bin
+```
+
+which walks the file to its last byte, and cross-checks against `SGAI_N_LAYERS 8`
+in `nano_gpt.h` and the plain `for (int l = 0; l < SGAI_N_LAYERS; l++)` in
+`nano_gpt.c` that applies every layer to every token. There is no router, no
+selection, and no expert-count field in the format. `src/expert_cache.c` is real
+streaming-MoE code but is in no build target — see `docs/STREAMING_MOE.md`, which
+is a design for a model that does not exist yet.
 
 ### What has not been checked
 
@@ -220,9 +296,18 @@ misreporting.
 - The RSP overlay has never been run on silicon either, and ares emits a
   cache-coherency warning at the first overlay switch (`FINDINGS.md` F-O004) that
   could not be confirmed benign off-hardware.
+- **The two clocks differ by a constant 0.18 %** and it is not known which of them
+  is off relative to silicon (see the table above). Nothing in this repo should be
+  quoted past three significant figures until an EverDrive 64 run settles it.
+- **PAL is untested.** `g_vi_hz` comes from `get_tv_type()`; every run here
+  reported NTSC.
+- **The RPI engine's "~100x faster" claim is an estimate**, not a measurement. No
+  RPI build has been through this counter.
 - **Reproduce it**: `make base EXTRA="-DRATE_PROBE"` then
   `python3 scripts/ares_rate_run.py <rom.z64> <log>`. Add `-DRATE_INGAME` to drive
-  the real vsync-locked game loop instead of the headless probe.
+  the real vsync-locked game loop instead of the headless probe. The full audit,
+  with every raw log, is [`docs/N64_RATE_FINDINGS.md`](docs/N64_RATE_FINDINGS.md)
+  and [`docs/rate_logs/`](docs/rate_logs/).
 
 ---
 

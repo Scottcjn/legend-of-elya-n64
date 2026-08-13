@@ -4,19 +4,21 @@ Everything you need to cover, judge, or exhibit the world's first LLM running on
 
 ## The one-liner
 
-**A real 819K-parameter GPT transformer runs live inference on a 93.75 MHz Nintendo 64 from 1996 — no lookup tables, no precomputed responses, real attention and softmax on the MIPS R4300i.**
+**A real 6.36M-parameter GPT transformer runs live inference on a 93.75 MHz Nintendo 64 from 1996 — no lookup tables, no precomputed responses, real attention and softmax on the MIPS R4300i, at 1.2 tokens per second.**
 
 ## 50-word blurb
 
-Legend of Elya is an N64 homebrew ROM whose NPC is powered by an actual nano-GPT transformer — 819K parameters, 4 layers, byte-level vocab — computing live on the 93.75 MHz MIPS R4300i. Every response is generated, seeded by hardware oscillator jitter. Built with libdragon. ROM and source are public.
+Legend of Elya is an N64 homebrew ROM whose NPC is powered by an actual nano-GPT transformer — 6.36M ternary-quantized parameters, 8 layers, byte-level vocab — computing live on the 93.75 MHz MIPS R4300i at 1.2 tok/s. Every response is generated, seeded by hardware oscillator jitter. Built with libdragon. ROM and source are public.
 
 ## 200-word blurb
 
 In 1996, Nintendo shipped a game console with a 93.75 MHz MIPS CPU and 4 MB of RAM. In 2026, that console runs a language model.
 
-Legend of Elya is an original Zelda-style homebrew ROM in which the NPC Sophia Elya answers the player through a real 4-layer GPT transformer: embedding, multi-head attention, feed-forward network, logits, sampling — all computed live on the N64's VR4300, in IEEE float32, at roughly 60 tok/s in emulator and 1–3 tok/s on stock real hardware (an RSP vector-microcode build ships for acceleration). There are no canned responses and no lookup tables; each answer is generated, with the RNG seeded from CPU oscillator jitter — hardware entropy from thirty-year-old silicon.
+Legend of Elya is an original Zelda-style homebrew ROM in which the NPC Sophia Elya answers the player through a real 8-layer GPT transformer: embedding, multi-head attention, feed-forward network, logits, sampling — all computed live on the N64's VR4300, in IEEE float32, at **1.23 tok/s** on the scalar CPU and **2.19 tok/s** on the RSP vector-microcode build. There are no canned responses and no lookup tables; each answer is generated, with the RNG seeded from CPU oscillator jitter — hardware entropy from thirty-year-old silicon.
 
-The engineering is period-appropriate brutalism: Q8 weights dequantized on the fly from a 458 KB cartridge file, a custom Taylor-series exp() that avoids the R4300i's missing trunc instruction, Quake III's fast inverse square root for RMS norm, and hand-managed big-endian conversion. The model has also been ported to C89 and runs on a 1998 Sun Cobalt Qube 3.
+The engineering is period-appropriate brutalism: ternary 2-bit weights dequantized on the fly from a 1,984 KB cartridge file, a custom Taylor-series exp() that avoids the R4300i's missing trunc instruction, Quake III's fast inverse square root for RMS norm, and hand-managed big-endian conversion. The model has also been ported to C89 and runs on a 1998 Sun Cobalt Qube 3.
+
+Both rate figures are measured against the video vertical blank under the ares emulator and have never been run on N64 silicon. An earlier "~60 tok/s" figure was withdrawn on 2026-08-13: the on-screen counter that produced it was not measuring elapsed time. The full audit is in the repository.
 
 ROM, source, weights, and papers are public. Proof or it didn't happen — and the proof is linked.
 
@@ -25,19 +27,21 @@ ROM, source, weights, and papers are public. Proof or it didn't happen — and t
 | | |
 |---|---|
 | Platform | Nintendo 64 (MIPS R4300i @ 93.75 MHz, 4 MB RDRAM) |
-| Model | nano-GPT, **819,200 parameters**, 4 layers, 4 heads, dim 128 |
+| Model | nano-GPT, **6,356,992 parameters**, 8 layers, 8 heads, dim 256, context 128 |
 | Vocabulary | 256 (byte-level ASCII) |
-| Weights | 458 KB Q8 (int8 + float16 block scales) on cartridge ROM |
+| Weights | 1,984 KB ternary (2-bit + float16 block scales) on cartridge ROM |
 | Inference | Float32 on the R4300i FPU; on-the-fly dequantization |
-| Speed | ~60 tok/s (ares emulator) · 1–3 tok/s real hardware, scalar · RSP vector build included |
+| Speed | **1.23 tok/s** scalar · **2.19 tok/s** RSP overlay build — measured under ares against the VI vblank; never run on silicon |
 | Memory | ~263 KB RDRAM total (256 KB KV cache + scratch) |
 | SDK | [libdragon](https://github.com/DragonMinded/libdragon) |
 | Bonus port | Same model in C89 on a 1998 Cobalt Qube 3 (AMD K6-2/450), ~12 tok/s |
 
 ## Honest limitations (we lead with these)
 
-- The headline 60 tok/s figure is **emulator** speed; stock real hardware runs 1–3 tok/s on the scalar CPU. The RSP microcode build is faster; real-hardware video capture of the EverDrive 64 run is still pending.
-- 819K parameters is a *nano* model: coherent short English responses to 32 themed prompts, not general conversation.
+- **The previously published ~60 tok/s figure is withdrawn** (2026-08-13). The on-screen counter that produced it divided a token count by a game-loop iteration count that advanced in lockstep with it, so it read ~60 on any machine at any speed. The measured figures are 1.23 tok/s scalar and 2.19 tok/s on the RSP build, both under ares against the video vertical blank, both still pending a real-hardware check. The correction and every raw log are in the repository.
+- **Nothing has been run on N64 silicon**; every number here is the ares emulator, whose cycle model is calibrated but is not a console. EverDrive 64 capture is still pending.
+- A sentence takes the better part of a minute, and the 25-token prompt costs ~20 s on the scalar build before the first character appears.
+- 6.36M ternary parameters is still a *nano* model: coherent short English responses to 32 themed prompts, not general conversation.
 - Greedy sampling; quality matches the x86 reference implementation of the same model, no more.
 
 ## Assets & proof
@@ -75,8 +79,8 @@ Legend of Elya is the flagship demo of the Elyan Labs thesis: *AI on impossible 
 | 0:00–0:08 | Black screen. White text: "This is a Nintendo 64." Hard cut to the real console, CRT glow. | Chip-style music sting. |
 | 0:08–0:20 | Slow push on the cartridge going in. Power LED. Boot to title screen. | Caption: "93.75 MHz. 4 MB RAM. 1996." |
 | 0:20–0:35 | Gameplay: walking up to Sophia Elya, pressing A. Dialog box opens. | Caption: "The NPC is not scripted." |
-| 0:35–0:60 | **The money shot**: tokens appearing character-by-character, live tok/s counter on screen. Let it breathe — no cuts for 15+ seconds. | Caption: "819,200-parameter GPT transformer. Live inference. Real attention. Real softmax." |
-| 0:60–0:75 | Quick-cut montage: code (Taylor exp, fast inverse sqrt), the 458 KB weight file, RSP microcode scrolling. | Caption: "No lookup tables. No network. The cartridge IS the model." |
+| 0:35–0:60 | **The money shot**: tokens appearing character-by-character, live tok/s counter on screen. Let it breathe — no cuts for 15+ seconds. | Caption: "6,356,992-parameter GPT transformer. Live inference. Real attention. Real softmax." |
+| 0:60–0:75 | Quick-cut montage: code (Taylor exp, fast inverse sqrt), the 1,984 KB weight file, RSP microcode scrolling. | Caption: "No lookup tables. No network. The cartridge IS the model." |
 | 0:75–0:90 | Split screen: same prompt, two runs, different outputs. | Caption: "Seeded by oscillator jitter. 30-year-old silicon as entropy source." |
 | 0:90–1:45 | The lineage montage: Cobalt Qube 3 terminal (12 tok/s), G4 PowerBook running TinyLlama, POWER8 rack. End on the N64 again. | Caption: "One lab. One thesis: AI on impossible hardware." |
 | 1:45–2:00 | ROM + repo URL card. "Runs in ares. Runs on real hardware. Source is public." | End card: github.com/Scottcjn/legend-of-elya-n64 · "Prove it or it didn't happen." |
