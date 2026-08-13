@@ -216,6 +216,33 @@ $(BUILD_DIR)/legend_of_elya_rsp_ovl.elf: $(BUILD_DIR)/legend_of_elya_rsp_ovl.o $
 legend_of_elya_rsp_ovl.z64: N64_ROM_TITLE="Elya RSP OVL"
 legend_of_elya_rsp_ovl.z64: $(BUILD_DIR)/legend_of_elya_rsp_ovl.dfs
 
+# --- Dual-processor consensus probe ------------------------------------------
+# TWO models resident: a ternary one on the MIPS core and an int8 one on the
+# RSP, voting per token.  Its own main() (dual_probe.c) rather than another
+# #ifdef in legend_of_elya.c, because the game's globals are built around one
+# model and this needs two of everything -- two weight buffers, two KV caches,
+# two activation scratch blocks.
+#
+# Its filesystem is filesystem_dual/, NOT filesystem/: it carries a second
+# 3.4 MB blob and every other ROM here would grow by that much if it shared.
+#
+#   make dual                       ternary CPU + int8 RSP, 16 tokens, shift 5
+#   make dual EXTRA=-DDUAL_SHIFT=0  the naive sum, i.e. the failure mode
+dual: legend_of_elya_dual.z64
+
+$(BUILD_DIR)/legend_of_elya_dual.dfs: filesystem_dual/sophia_weights.bin filesystem_dual/sophia_int8.bin
+	@mkdir -p $(BUILD_DIR)
+	$(N64_MKDFS) $@ filesystem_dual/
+
+$(BUILD_DIR)/dual_probe.o: dual_probe.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_dual.elf: $(BUILD_DIR)/dual_probe.o $(BUILD_DIR)/nano_gpt_rsp_ovl.o $(BUILD_DIR)/matmul_rsp2_ovl.o $(BUILD_DIR)/rsp_mm2_ovl.o
+
+legend_of_elya_dual.z64: N64_ROM_TITLE="Elya Dual"
+legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
+
 # --- Mining ROM (CPU LLM + Pico bridge + RTC mining) ---
 mining: legend_of_elya_mining.z64
 
@@ -294,7 +321,7 @@ reference_cli: reference_cli.c
 
 -include $(wildcard $(BUILD_DIR)/*.d)
 
-.PHONY: all base base-rsp base-rsp-ovl mining rpc-mining 3d reference clean
+.PHONY: all base base-rsp base-rsp-ovl dual mining rpc-mining 3d reference clean
 
 reference: reference_cli
 reference_cli: reference_cli.c
