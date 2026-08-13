@@ -432,6 +432,15 @@ int rsp_matmul_begin(const uint8_t *weights, const float *input,
      * Created here and waited on in end(), NOT waited on here: the whole
      * point of the split is that the CPU leaves with the RSP still running. */
     mm_sync = rspq_syncpoint_new();
+    /* And KICK IT.  rspq_write() only appends to the command buffer in RDRAM;
+     * rspq_syncpoint_new() appends too and does not flush either.  The RSP is
+     * only told there is new work by rspq_flush(), and until libdragon 's
+     * rspq_syncpoint_wait() calls rspq_flush_internal() itself -- inside
+     * end().  Without this line the split-dispatch driver is a lie: the RSP
+     * would not start until the CPU came back to wait for it, so the "overlap"
+     * would be exactly zero and every dispatch would be counted blocked.
+     * Measured either way, see docs/N64_DUAL_FINDINGS.md F-DU002. */
+    rspq_flush();
 #else
     rsp_load_data(rsp2_xi, (unsigned long)(in_dim * 2), DM_XI);
     rsp_load_data(rsp2_params, 64, 0);
