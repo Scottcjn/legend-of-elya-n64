@@ -1,3 +1,4 @@
+import os
 #!/usr/bin/env python3
 """Run a ROM under ares and timestamp every line it prints with the HOST clock.
 
@@ -96,9 +97,10 @@ def main() -> int:
                 if proc.poll() is not None:
                     break
                 time.sleep(0.1)
-        subprocess.run(["pkill", "-INT", "-x", "ares"], check=False)
-        time.sleep(1.0)
-        subprocess.run(["pkill", "-9", "-x", "ares"], check=False)
+        # Only ever kill OUR process group. The previous code ran a bare
+        # `pkill -x ares`, which kills EVERY emulator on the box - it killed
+        # three sibling agents' runs mid-measurement. os.killpg above already
+        # targets this run's group; anything beyond that is out of scope.
         try:
             os.close(master)
         except OSError:
