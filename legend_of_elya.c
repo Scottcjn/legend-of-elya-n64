@@ -1458,6 +1458,13 @@ static float            g_vi_hz = 59.94f; /* set from get_tv_type() in main() */
 static void vbl_counter(void) { g_vbl++; }
 
 #if defined(RATE_PROBE)
+/* Vblank stamp taken where a dialog STARTS, i.e. at the beginning of prompt
+ * ingestion.  That is where the shipped counter's denominator used to start
+ * while its numerator counted output tokens only, so keeping the stamp lets
+ * the pre-fix rate be printed beside the fixed one on the same tokens of the
+ * same run, instead of being reconstructed arithmetically afterwards. */
+static uint32_t g_rate_dialog_start_vbl = 0;
+
 /* IS-Viewer write used by the rate probe from outside game_init().  The
  * IS-Viewer window accepts 32-BIT WRITES ONLY — byte stores silently drop
  * three of every four characters (see the probe preamble in game_init). */
@@ -1739,6 +1746,22 @@ static void update_generating_step(void) {
                         (unsigned)(G.perf_toks_precise * 1000.0f),
                         (unsigned)(G.perf_toks_cp0 * 1000.0f));
                 rate_isv(rl);
+                /* The PRE-FIX denominator: vblanks since the dialog started,
+                 * i.e. prompt ingestion included, against a numerator that
+                 * counts output tokens only.  This is what the counter did
+                 * before the output-phase fix, printed on the same tokens of
+                 * the same run so the size of the error is measured rather
+                 * than argued. */
+                {
+                    uint32_t vall = g_vbl - g_rate_dialog_start_vbl;
+                    sprintf(rl, "RATE HUD PREFIX vbl_incl_prompt=%u "
+                                "toks_prefix_x1000=%u\n",
+                            (unsigned)vall,
+                            (unsigned)(vall ? (uint64_t)G.gen_out_count
+                                              * (uint32_t)(g_vi_hz * 1000.0f)
+                                              / vall : 0u));
+                    rate_isv(rl);
+                }
                 sprintf(rl, "RATE HUD TEXT %s\n", (char *)G.dialog_buf);
                 rate_isv(rl);
                 rate_isv("RATE_INGAME_DONE\n");
@@ -1771,6 +1794,9 @@ static void start_dialog_from_prompt(int npc_idx, const char *prompt, int use_pe
     G.perf_gen_total_us = 0;
     G.perf_gen_start_us  = CYCLES_TO_US(TICKS_READ());
     G.perf_gen_start_vbl = g_vbl;
+#ifdef RATE_PROBE
+    g_rate_dialog_start_vbl = g_vbl;
+#endif
     G.perf_cpu_pct      = 0.0f;
     G.perf_toks_precise = 0.0f;
     G.perf_toks_cp0     = 0.0f;

@@ -1,36 +1,64 @@
-     1.393  Loaded rate_scalar_ingame
-     1.798  Vulkan Enabled: using paraLLEl-RDP
-     2.037  RATE INIT rdy=1 bits=2 ctx=128 vi_hz_x100=5994 tv=1
-     2.037  RATE A_START
-    10.457  RATE A cp0=234375001 vbl=299 cp0_sec_x1000=5000 vbl_sec_x1000=4988
-    10.457  RATE A_END
-    41.986  RATE B_START
-    63.809  RATE B toks=16 cp0=609861593 vbl=778
-    63.809  RATE B tps_cp0_x1000=1229 tps_vbl_x1000=1232
-    63.809  RATE B TEXT all me Sophia El
-    63.809  RATE B_END
-    63.809  RATE_DONE
-    99.070  RATE HUD n=1 vbl=48 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
-   100.370  RATE HUD n=2 vbl=96 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
-   101.582  RATE HUD n=3 vbl=144 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
-   102.749  RATE HUD n=4 vbl=192 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
-   103.951  RATE HUD n=5 vbl=241 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
-   105.201  RATE HUD n=6 vbl=289 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
-   106.594  RATE HUD n=7 vbl=338 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
-   108.008  RATE HUD n=8 vbl=387 toks_vbl=1.23 toks_cp0=1.24 toks_legacyframe=60.00
-   109.260  RATE HUD n=9 vbl=436 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
-   110.670  RATE HUD n=10 vbl=485 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
-   112.062  RATE HUD n=11 vbl=534 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
-   113.625  RATE HUD n=12 vbl=583 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
-   114.974  RATE HUD n=13 vbl=633 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
-   116.232  RATE HUD n=14 vbl=683 toks_vbl=1.22 toks_cp0=1.23 toks_legacyframe=60.00
-   117.405  RATE HUD n=15 vbl=733 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
-   118.635  RATE HUD n=16 vbl=783 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
-   119.980  RATE HUD n=17 vbl=833 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
-   121.403  RATE HUD n=18 vbl=883 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
-   122.748  RATE HUD n=19 vbl=934 toks_vbl=1.21 toks_cp0=1.22 toks_legacyframe=60.00
-   122.748  RATE HUD FINAL out=19 chars=19 vbl=934 toks_vbl_x1000=1219 toks_cp0_x1000=1220
-   122.749  RATE HUD TEXT Call me Sophia Elya
-   122.749  RATE_INGAME_DONE
-HOSTCLOCK phase A: 8.419 s wall
-HOSTCLOCK phase B: 21.823 s wall
+     1.518  Loaded rate_scalar_ingame
+     2.137  Vulkan Enabled: using paraLLEl-RDP
+     2.720  RATE INIT rdy=1 bits=2 ctx=128 vi_hz_x100=5994 tv=1
+     2.720  RATE A_START
+    14.272  RATE A cp0=234375001 vbl=299 cp0_sec_x1000=5000 vbl_sec_x1000=4988
+    14.272  RATE A_END
+    50.789  RATE B PROMPT toks=25 cp0=916302576 vbl=1170
+    50.789  RATE B_START
+    74.684  RATE B toks=16 cp0=609771066 vbl=778
+    74.684  RATE B tps_cp0_x1000=1229 tps_vbl_x1000=1232
+    74.685  RATE B TEXT all me Sophia El
+    74.685  RATE B_END
+    74.685  RATE_DONE
+    76.127  [WARN]: Will exceed memory budget, cleaning up ...
+    76.127  [WARN]:   Size: 64 MiB.
+    76.127  [WARN]:   Device usage: 64 MiB.
+    76.127  [WARN]:   Tracked usage: 192 MiB.
+    76.127  [WARN]:   Budget size: 122 MiB.
+    76.127  [WARN]:   Max size: 8188 MiB.
+    76.127  [WARN]: Even after garbage collection, we will exceed budget ...
+    76.127  [WARN]:   Size: 64 MiB.
+    76.127  [WARN]:   Device usage: 64 MiB.
+    76.127  [WARN]:   Tracked usage: 192 MiB.
+    76.127  [WARN]:   Budget size: 122 MiB.
+    76.127  [WARN]:   Max size: 8188 MiB.
+    76.127  [WARN]: Exhausted LinkedDeviceHost memory, falling back to host.
+    89.455  [WARN]: Will exceed memory budget, cleaning up ...
+    89.455  [WARN]:   Size: 64 MiB.
+    89.455  [WARN]:   Device usage: 64 MiB.
+    89.455  [WARN]:   Tracked usage: 192 MiB.
+    89.455  [WARN]:   Budget size: 116 MiB.
+    89.455  [WARN]:   Max size: 8188 MiB.
+    89.455  [WARN]: Even after garbage collection, we will exceed budget ...
+    89.455  [WARN]:   Size: 64 MiB.
+    89.455  [WARN]:   Device usage: 64 MiB.
+    89.455  [WARN]:   Tracked usage: 192 MiB.
+    89.455  [WARN]:   Budget size: 116 MiB.
+    89.455  [WARN]:   Max size: 8188 MiB.
+    89.455  [WARN]: Exhausted LinkedDeviceHost memory, falling back to host.
+   113.353  RATE HUD n=1 vbl=48 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
+   114.741  RATE HUD n=2 vbl=97 toks_vbl=1.23 toks_cp0=1.24 toks_legacyframe=60.00
+   116.222  RATE HUD n=3 vbl=145 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
+   117.866  RATE HUD n=4 vbl=193 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
+   119.485  RATE HUD n=5 vbl=241 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
+   120.890  RATE HUD n=6 vbl=290 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
+   122.244  RATE HUD n=7 vbl=338 toks_vbl=1.24 toks_cp0=1.24 toks_legacyframe=60.00
+   123.560  RATE HUD n=8 vbl=387 toks_vbl=1.23 toks_cp0=1.24 toks_legacyframe=60.00
+   125.027  RATE HUD n=9 vbl=436 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
+   126.647  RATE HUD n=10 vbl=485 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
+   128.447  RATE HUD n=11 vbl=534 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
+   129.959  RATE HUD n=12 vbl=584 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
+   131.339  RATE HUD n=13 vbl=633 toks_vbl=1.23 toks_cp0=1.23 toks_legacyframe=60.00
+   132.744  RATE HUD n=14 vbl=683 toks_vbl=1.22 toks_cp0=1.23 toks_legacyframe=60.00
+   134.216  RATE HUD n=15 vbl=733 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
+   135.799  RATE HUD n=16 vbl=783 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
+   137.500  RATE HUD n=17 vbl=833 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
+   139.199  RATE HUD n=18 vbl=884 toks_vbl=1.22 toks_cp0=1.22 toks_legacyframe=60.00
+   140.663  RATE HUD n=19 vbl=934 toks_vbl=1.21 toks_cp0=1.22 toks_legacyframe=60.00
+   140.663  RATE HUD FINAL out=19 chars=19 vbl=934 toks_vbl_x1000=1219 toks_cp0_x1000=1220
+   140.663  RATE HUD PREFIX vbl_incl_prompt=2111 toks_prefix_x1000=539
+   140.663  RATE HUD TEXT Call me Sophia Elya
+   140.664  RATE_INGAME_DONE
+HOSTCLOCK phase A: 11.552 s wall
+HOSTCLOCK phase B: 23.896 s wall
