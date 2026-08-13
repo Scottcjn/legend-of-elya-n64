@@ -208,18 +208,39 @@ void matmul_pk(const uint8_t *w, const uint16_t *scales,
                       const float *input, float *output,
                       int in_dim, int out_dim, int bits)
 {
-#ifdef USE_RSP_MATMUL
-    /* Both 8-bit and 2-bit go to the RSP.  The driver falls back to an exact
-     * CPU loop for any shape it cannot tile (in_dim not a multiple of 256). */
-    rsp_matmul_pk(w, scales, input, output, in_dim, out_dim, bits);
-#else
     if (bits == 8)
         matmul_q8((const int8_t *)w, scales, input, output, in_dim, out_dim);
     else if (bits == 2)
         matmul_t2(w, scales, input, output, in_dim, out_dim);
     else
         matmul_qn(w, scales, input, output, in_dim, out_dim, bits);
+}
+
+/* Engine dispatch.
+ *
+ * This used to be a #ifdef: USE_RSP_MATMUL sent EVERY matmul to the RSP and
+ * nothing to the CPU kernels.  One model, one processor, one choice, decided
+ * at compile time.  The dual-processor consensus runs two models with
+ * different formats on different processors in the same build, so the choice
+ * has to be per-model and therefore at run time.
+ *
+ * The RSP branch is compiled in only when the driver is linked; a CPU-only
+ * build still has no reference to it. */
+static void matmul_e(const uint8_t *w, const uint16_t *scales,
+                     const float *input, float *output,
+                     int in_dim, int out_dim, int bits, int engine)
+{
+#ifdef USE_RSP_MATMUL
+    if (engine == SGAI_ENGINE_RSP) {
+        /* The driver falls back to an exact CPU loop for any shape it cannot
+         * tile (in_dim not a multiple of 256). */
+        rsp_matmul_pk(w, scales, input, output, in_dim, out_dim, bits);
+        return;
+    }
+#else
+    (void)engine;
 #endif
+    matmul_pk(w, scales, input, output, in_dim, out_dim, bits);
 }
 
 /* Resolve one layer's six tensors inside a bit-packed blob. */
@@ -605,28 +626,32 @@ static void kv_store_q8(SGAIKVCache *kv, int layer_idx, int pos,
 }
 #endif /* SGAI_KV_INT8 */
 
-static void attention_layer(const SGAILayerPtrs *L, int bits, SGAIKVCache *kv,
-                            int layer_idx, int pos, float *x)
+/* The layer, broken into the phases BETWEEN its six matmuls.
+ *
+ * Split out so the single-model path and the dual-processor path run the
+ * identical arithmetic and differ only in WHERE the matmuls between the
+ * phases are dispatched.  Anything else and the "same model, two engines"
+ * claim would be about two pieces of code rather than one. */
+
+/* Shared scratch for a state that was not given its own.  Exactly the old
+ * `static` locals, so a single-model build is unchanged. */
+static SGAIScratch sgai_shared_scratch;
+
+static void layer_pre(SGAIState *st)
 {
-    static float q[SGAI_N_EMBED];
-    static float k_cur[SGAI_N_EMBED];
-    static float v_cur[SGAI_N_EMBED];
-    static float attn_out[SGAI_N_EMBED];
-    static float ff_buf[SGAI_N_EMBED * 4];
-    static float attn_scores[SGAI_CTX];
-    static float residual[SGAI_N_EMBED];
+    memcpy(st->sc->residual, st->x, SGAI_N_EMBED * sizeof(float));
+    rms_norm(st->x, SGAI_N_EMBED);
+}
+
+static void layer_attn(SGAIState *st, int layer_idx, int pos)
+{
+    SGAIScratch *S = st->sc;
+    SGAIKVCache *kv = st->kv;
+    float *q = S->q, *k_cur = S->k_cur, *v_cur = S->v_cur;
+    float *attn_out = S->attn_out, *attn_scores = S->attn_scores;
     float head_sharpness[SGAI_N_HEADS];
-
-    /* Save residual */
-    memcpy(residual, x, SGAI_N_EMBED * sizeof(float));
-
-    /* Layer norm */
-    rms_norm(x, SGAI_N_EMBED);
-
-    /* Q, K, V projections */
-    matmul_pk(L->w[0], L->s[0], x, q,     SGAI_N_EMBED, SGAI_N_EMBED, bits);
-    matmul_pk(L->w[1], L->s[1], x, k_cur, SGAI_N_EMBED, SGAI_N_EMBED, bits);
-    matmul_pk(L->w[2], L->s[2], x, v_cur, SGAI_N_EMBED, SGAI_N_EMBED, bits);
+    float *x = st->x;
+    (void)x;
 
     /* Store K, V in cache */
     if (pos < SGAI_CTX) {
@@ -644,7 +669,12 @@ static void attention_layer(const SGAILayerPtrs *L, int bits, SGAIKVCache *kv,
     const float inv_sqrt_hd = SGAI_INV_SQRT_HEAD_DIM;
 
     for (int h = 0; h < SGAI_N_HEADS; h++) {
-        float cond = pse_state.conductance[layer_idx][h];
+        /* pse_state is ONE global, so two models running interleaved would
+         * share a router and silently condition each other's attention.  A
+         * state with pse == 0 does not read it and does not update it, which
+         * is also the configuration the numpy oracle implements -- so the
+         * dual arm is the arm that can be checked against the host. */
+        float cond = st->pse ? pse_state.conductance[layer_idx][h] : 1.0f;
 
         /* PSE: Physarum prune — skip retracted tubes entirely */
         if (cond < PSE_PHYSARUM_PRUNE) {
@@ -687,7 +717,7 @@ static void attention_layer(const SGAILayerPtrs *L, int bits, SGAIKVCache *kv,
 #ifdef SGAI_KV_INT8
         /* Fold the per-(t,head) V dequant scale into the attention weight once,
          * instead of once per (t,d).  32 multiplies become 1 per timestep. */
-        static float vw[SGAI_CTX];
+        float *vw = S->vw;
         for (int t = 0; t < n_ctx; t++)
             vw[t] = attn_scores[t] * kv->vs[layer_idx][t][h / (SGAI_N_HEADS / SGAI_KV_NSCALE)];
         for (int d = 0; d < SGAI_HEAD_DIM; d++) {
@@ -707,43 +737,70 @@ static void attention_layer(const SGAILayerPtrs *L, int bits, SGAIKVCache *kv,
     }
 
     /* Update Physarum conductances */
-    pse_physarum_update(layer_idx, head_sharpness);
+    if (st->pse)
+        pse_physarum_update(layer_idx, head_sharpness);
+}
 
-    /* Output projection */
-    static float proj_out[SGAI_N_EMBED];
-    matmul_pk(L->w[3], L->s[3], attn_out, proj_out, SGAI_N_EMBED, SGAI_N_EMBED, bits);
-
-    /* Residual add */
+/* After wo: residual add, then the FFN pre-norm. */
+static void layer_mid(SGAIState *st)
+{
+    SGAIScratch *S = st->sc;
     for (int i = 0; i < SGAI_N_EMBED; i++)
-        x[i] = residual[i] + proj_out[i];
+        st->x[i] = S->residual[i] + S->proj_out[i];
 
-    /* FFN block */
-    memcpy(residual, x, SGAI_N_EMBED * sizeof(float));
-    rms_norm(x, SGAI_N_EMBED);
+    memcpy(S->residual, st->x, SGAI_N_EMBED * sizeof(float));
+    rms_norm(st->x, SGAI_N_EMBED);
+}
 
-    /* ff1: 128 -> 512 + ReLU */
-    matmul_pk(L->w[4], L->s[4], x, ff_buf, SGAI_N_EMBED, SGAI_N_EMBED * 4, bits);
+/* After ff1. */
+static void layer_relu(SGAIState *st)
+{
+    SGAIScratch *S = st->sc;
     for (int i = 0; i < SGAI_N_EMBED * 4; i++)
-        if (ff_buf[i] < 0.0f) ff_buf[i] = 0.0f;
+        if (S->ff_buf[i] < 0.0f) S->ff_buf[i] = 0.0f;
 #ifdef MAG_TRACE
     for (int i = 0; i < SGAI_N_EMBED * 4; i++) {
-        if (ff_buf[i] == 0.0f) mag.ff_zero += 1;
+        if (S->ff_buf[i] == 0.0f) mag.ff_zero += 1;
         mag.ff_n += 1;
     }
     for (int i = 0; i < SGAI_N_EMBED; i++) {
-        float a = attn_out[i] < 0 ? -attn_out[i] : attn_out[i];
+        float a = S->attn_out[i] < 0 ? -S->attn_out[i] : S->attn_out[i];
         if (a > mag.attn_absmax) mag.attn_absmax = a;
     }
-    mag_scan(x, SGAI_N_EMBED);
+    mag_scan(st->x, SGAI_N_EMBED);
 #endif
+}
 
-    /* ff2: 512 -> 128 (dense — sparse column-wise was slower due to cache thrash) */
-    static float ff_out[SGAI_N_EMBED];
-    matmul_pk(L->w[5], L->s[5], ff_buf, ff_out, SGAI_N_EMBED * 4, SGAI_N_EMBED, bits);
-
-    /* Residual add */
+/* After ff2. */
+static void layer_post(SGAIState *st)
+{
+    SGAIScratch *S = st->sc;
     for (int i = 0; i < SGAI_N_EMBED; i++)
-        x[i] = residual[i] + ff_out[i];
+        st->x[i] = S->residual[i] + S->ff_out[i];
+}
+
+/* The single-model layer: the phases above with its six matmuls between them,
+ * every one of them on this state's own engine. */
+static void attention_layer(SGAIState *st, const SGAILayerPtrs *L,
+                            int layer_idx, int pos)
+{
+    SGAIScratch *S = st->sc;
+    const int bits = st->w_bits, eng = st->engine;
+
+    layer_pre(st);
+    matmul_e(L->w[0], L->s[0], st->x, S->q,     SGAI_N_EMBED, SGAI_N_EMBED, bits, eng);
+    matmul_e(L->w[1], L->s[1], st->x, S->k_cur, SGAI_N_EMBED, SGAI_N_EMBED, bits, eng);
+    matmul_e(L->w[2], L->s[2], st->x, S->v_cur, SGAI_N_EMBED, SGAI_N_EMBED, bits, eng);
+    layer_attn(st, layer_idx, pos);
+    matmul_e(L->w[3], L->s[3], S->attn_out, S->proj_out,
+             SGAI_N_EMBED, SGAI_N_EMBED, bits, eng);
+    layer_mid(st);
+    matmul_e(L->w[4], L->s[4], st->x, S->ff_buf,
+             SGAI_N_EMBED, SGAI_N_EMBED * 4, bits, eng);
+    layer_relu(st);
+    matmul_e(L->w[5], L->s[5], S->ff_buf, S->ff_out,
+             SGAI_N_EMBED * 4, SGAI_N_EMBED, bits, eng);
+    layer_post(st);
 }
 
 /* -----------------------------------------------------------------------
@@ -986,7 +1043,25 @@ samp_done:
 
 void sgai_init(SGAIState *state, const void *rom_weights)
 {
+    /* Historical default: the shared scratch, and whichever engine the build
+     * was compiled for.  Every existing caller keeps its behaviour. */
+    sgai_init_ex(state, rom_weights,
+#ifdef USE_RSP_MATMUL
+                 SGAI_ENGINE_RSP,
+#else
+                 SGAI_ENGINE_CPU,
+#endif
+                 &sgai_shared_scratch, 1);
+}
+
+void sgai_init_ex(SGAIState *state, const void *rom_weights,
+                  int engine, SGAIScratch *scratch, int pse)
+{
     memset(state, 0, sizeof(SGAIState));
+    state->engine   = engine;
+    state->sc       = scratch ? scratch : &sgai_shared_scratch;
+    state->pse      = pse;
+    state->n_layers = SGAI_N_LAYERS;
 
     if (rom_weights != NULL) {
         const SGAIHeader *hdr = (const SGAIHeader *)rom_weights;
@@ -1010,6 +1085,16 @@ void sgai_init(SGAIState *state, const void *rom_weights)
             state->w_bits = bits;
             state->weights = hdr;
             state->is_loaded = 1;
+            /* n_layers comes from the blob, not from the macro.  The two
+             * members of the dual consensus are DIFFERENT depths -- an 8-layer
+             * ternary model and a 4-layer int8 one -- because 2,031,628 +
+             * 6,750,220 bytes of weights do not fit in 8,388,608 bytes of
+             * RDRAM.  SGAI_N_LAYERS stays the ceiling that sizes the KV cache
+             * and the PSE router, so a deeper blob is clamped rather than
+             * walked off the end of either. */
+            state->n_layers = (int)hdr->n_layers;
+            if (state->n_layers < 1) state->n_layers = 1;
+            if (state->n_layers > SGAI_N_LAYERS) state->n_layers = SGAI_N_LAYERS;
             /* em_scale_x16 is uint8_t — no byte swap needed */
             state->em_scale = (float)hdr->em_scale_x16 / 16.0f;
 #ifndef SGAI_EM_SCALE_DEFAULT
@@ -1037,7 +1122,7 @@ void sgai_init(SGAIState *state, const void *rom_weights)
      * done once; after it the CPU kernels can no longer read these weights,
      * which is why an RSP build routes every matmul to the RSP. */
     rsp_matmul_init();
-    if (state->is_loaded) {
+    if (state->is_loaded && state->engine == SGAI_ENGINE_RSP) {
         static const int t_in[SGAI_N_TENSORS] = {
             SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED,
             SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED * 4
@@ -1046,15 +1131,23 @@ void sgai_init(SGAIState *state, const void *rom_weights)
             SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED,
             SGAI_N_EMBED, SGAI_N_EMBED * 4, SGAI_N_EMBED
         };
-        for (int li = 0; li < SGAI_N_LAYERS; li++) {
+        for (int li = 0; li < state->n_layers; li++) {
             SGAILayerPtrs L;
             sgai_layer_ptrs(state, li, &L);
             for (int t = 0; t < SGAI_N_TENSORS; t++)
                 rsp2_permute_tensor((uint8_t *)(uintptr_t)L.w[t],
                                     t_in[t], t_out[t], state->w_bits);
         }
-        rsp2_weights_ready((void *)(uintptr_t)state->weights,
-                           (unsigned long)SGAI_WEIGHT_BUF_BYTES);
+        /* Write back exactly this blob, not a fixed macro: two blobs of
+         * different depths are resident at once and flushing
+         * SGAI_WEIGHT_BUF_BYTES from a 4-layer blob's base would walk into
+         * whatever follows it. */
+        {
+            const size_t wb = (size_t)SGAI_LAYER_ELEMS * (size_t)state->w_bits / 8u;
+            rsp2_weights_ready((void *)(uintptr_t)state->weights,
+                (unsigned long)(12u + (size_t)SGAI_VOCAB * SGAI_N_EMBED
+                    + (size_t)state->n_layers * (wb + SGAI_LAYER_SCALE_BYTES)));
+        }
     }
 #endif
 }
@@ -1087,9 +1180,9 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
     /* 2. Run transformer layers */
     if (state->is_loaded && state->weights != NULL) {
         SGAILayerPtrs lp;
-        for (int l = 0; l < SGAI_N_LAYERS; l++) {
+        for (int l = 0; l < state->n_layers; l++) {
             sgai_layer_ptrs(state, l, &lp);
-            attention_layer(&lp, state->w_bits, state->kv, l, pos, state->x);
+            attention_layer(state, &lp, l, pos);
         }
     }
 
@@ -1097,13 +1190,15 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
     rms_norm(state->x, SGAI_N_EMBED);
 
     /* PSE: Burst entropy injection (N64 CP0 COUNT = POWER8 mftb equivalent) */
-    pse_burst_inject(state->x, SGAI_N_EMBED);
+    if (state->pse)
+        pse_burst_inject(state->x, SGAI_N_EMBED);
 
     /* 4. Project to logits */
     project_to_logits(state->weights, state->em_scale, state->x, state->logits);
 
     /* PSE: Check for topic change → Physarum exploration reset */
-    pse_physarum_check_reset(state->logits);
+    if (state->pse)
+        pse_physarum_check_reset(state->logits);
 
     /* 5. Sample */
     uint8_t next_tok = sample_logits(state->logits, temperature_q8,
@@ -1143,6 +1238,165 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
     if (state->seq_len < SGAI_CTX)
         state->tokens[state->seq_len++] = input_token;
 
+    return next_tok;
+}
+
+/* -----------------------------------------------------------------------
+ * The dual-processor consensus.
+ *
+ * a runs on the MIPS core in ternary, b on the RSP in int8, because that is
+ * where each format wins: measured on this port over 16 tokens, ternary is
+ * 57.0 % cheaper than int8 on the CPU and 11.9 % dearer than int8 on the RSP.
+ *
+ * The overlap is the whole point, and it lives in the ordering below: b's
+ * matmul is DISPATCHED, then a's matmul of the same slot runs on the CPU
+ * while the vector unit works, and only then is b's result collected.  A
+ * ternary 256x256 on the CPU is about twice the wall time of an int8 256x256
+ * on the RSP, so the RSP should finish first every time -- rsp_n_free counts
+ * the dispatches for which it did, and rsp_t_wait counts the cycles it did
+ * not.  Neither is assumed.
+ *
+ * What CANNOT be overlapped, and is not claimed to be: the driver's own CPU
+ * work.  Every RSP matmul is [CPU quantizes the activations] [dispatch]
+ * [RSP runs] [CPU applies one float scale per 32-weight block].  Only the
+ * middle is the vector unit's.  So the floor for this scheme is NOT the
+ * ternary model's cost -- it is the ternary model plus the int8 arm's staging
+ * and epilogue, and the probe measures all three phases separately.
+ * ----------------------------------------------------------------------- */
+float sgai_dual_logits[SGAI_VOCAB];
+
+/* One matmul slot of a fused layer: dispatch b, do a, collect b.
+ * Either side may be absent (b runs out of layers before a does). */
+static void dual_mm(SGAIState *a, const SGAILayerPtrs *LA,
+                    SGAIState *b, const SGAILayerPtrs *LB,
+                    int t, const float *ain, float *aout,
+                    const float *bin, float *bout, int in_dim, int out_dim)
+{
+#ifdef USE_RSP_MATMUL
+    int dispatched = 0;
+    if (LB != NULL)
+        dispatched = rsp_matmul_begin(LB->w[t], bin, in_dim, out_dim, b->w_bits);
+#endif
+    if (LA != NULL)
+        matmul_e(LA->w[t], LA->s[t], ain, aout, in_dim, out_dim,
+                 a->w_bits, a->engine);
+#ifdef USE_RSP_MATMUL
+    if (LB != NULL) {
+        if (dispatched)
+            rsp_matmul_end(LB->s[t], bout, in_dim, out_dim, b->w_bits);
+        else
+            rsp_matmul_cpu(LB->w[t], LB->s[t], bin, bout,
+                           in_dim, out_dim, b->w_bits);
+    }
+#else
+    if (LB != NULL)
+        matmul_e(LB->w[t], LB->s[t], bin, bout, in_dim, out_dim,
+                 b->w_bits, b->engine);
+#endif
+}
+
+uint8_t sgai_dual_next_token(SGAIState *a, SGAIState *b, int shift,
+                             uint8_t input_token, uint32_t temperature_q8)
+{
+    if (!a->kv || !b->kv) return 0;
+    const int pos_a = a->kv->pos, pos_b = b->kv->pos;
+
+    embed_lookup(a->weights, a->em_scale, input_token, a->x);
+    embed_lookup(b->weights, b->em_scale, input_token, b->x);
+
+    const int nl = (a->n_layers > b->n_layers) ? a->n_layers : b->n_layers;
+    for (int l = 0; l < nl; l++) {
+        SGAILayerPtrs la, lb;
+        const SGAILayerPtrs *LA = NULL, *LB = NULL;
+        if (l < a->n_layers) { sgai_layer_ptrs(a, l, &la); LA = &la; layer_pre(a); }
+        if (l < b->n_layers) { sgai_layer_ptrs(b, l, &lb); LB = &lb; layer_pre(b); }
+
+        dual_mm(a, LA, b, LB, 0, a->x, a->sc->q,     b->x, b->sc->q,
+                SGAI_N_EMBED, SGAI_N_EMBED);
+        dual_mm(a, LA, b, LB, 1, a->x, a->sc->k_cur, b->x, b->sc->k_cur,
+                SGAI_N_EMBED, SGAI_N_EMBED);
+        dual_mm(a, LA, b, LB, 2, a->x, a->sc->v_cur, b->x, b->sc->v_cur,
+                SGAI_N_EMBED, SGAI_N_EMBED);
+
+        /* Attention is CPU for both members and offers the RSP nothing.  It
+         * is also 1.7 % of a layer's multiply-accumulates at this context
+         * length, so nothing is being left on the table. */
+        if (LA) layer_attn(a, l, pos_a);
+        if (LB) layer_attn(b, l, pos_b);
+
+        dual_mm(a, LA, b, LB, 3, a->sc->attn_out, a->sc->proj_out,
+                b->sc->attn_out, b->sc->proj_out, SGAI_N_EMBED, SGAI_N_EMBED);
+        if (LA) layer_mid(a);
+        if (LB) layer_mid(b);
+
+        dual_mm(a, LA, b, LB, 4, a->x, a->sc->ff_buf, b->x, b->sc->ff_buf,
+                SGAI_N_EMBED, SGAI_N_EMBED * 4);
+        if (LA) layer_relu(a);
+        if (LB) layer_relu(b);
+
+        dual_mm(a, LA, b, LB, 5, a->sc->ff_buf, a->sc->ff_out,
+                b->sc->ff_buf, b->sc->ff_out, SGAI_N_EMBED * 4, SGAI_N_EMBED);
+        if (LA) layer_post(a);
+        if (LB) layer_post(b);
+    }
+
+    rms_norm(a->x, SGAI_N_EMBED);
+    rms_norm(b->x, SGAI_N_EMBED);
+    if (a->pse) pse_burst_inject(a->x, SGAI_N_EMBED);
+    project_to_logits(a->weights, a->em_scale, a->x, a->logits);
+    project_to_logits(b->weights, b->em_scale, b->x, b->logits);
+
+    /* The vote.  b's logits are divided by 2^shift before the sum, which on
+     * this CPU is one multiply by an exact power of two per vocabulary entry
+     * -- not an approximation of a normalisation, an exact scaling.  A naive
+     * sum (shift 0) is the louder head alone, which is the failure mode this
+     * exists to avoid; the shift that makes them commensurate is MEASURED,
+     * see docs/N64_DUAL_FINDINGS.md. */
+    {
+        float sb = 1.0f;
+        for (int i = 0; i < shift; i++) sb *= 0.5f;
+        for (int v = 0; v < SGAI_VOCAB; v++)
+            sgai_dual_logits[v] = a->logits[v] + b->logits[v] * sb;
+    }
+
+    uint8_t next_tok = sample_logits(sgai_dual_logits, temperature_q8,
+                                     a->penalty_hist, (int)a->penalty_n);
+
+    if (temperature_q8 > 0) {
+        int new_n = ((int)a->penalty_n < 3) ? (int)a->penalty_n + 1 : 3;
+        for (int i = new_n - 1; i > 0; i--)
+            a->penalty_hist[i] = a->penalty_hist[i - 1];
+        a->penalty_hist[0] = next_tok;
+        a->penalty_n = (uint8_t)new_n;
+    }
+
+    /* Both caches advance.  Feeding the vote's token to BOTH members is what
+     * makes the scheme implementable at all: skip a member on a token and its
+     * KV cache has a hole, and every repair for that is either no cheaper or
+     * a different model. */
+    for (int which = 0; which < 2; which++) {
+        SGAIState *st = which ? b : a;
+        if (st->kv->pos < SGAI_CTX - 1) {
+            st->kv->pos++;
+        } else {
+            for (int l = 0; l < st->n_layers; l++) {
+                for (int t = 0; t < SGAI_CTX - 1; t++) {
+                    memcpy(st->kv->k[l][t], st->kv->k[l][t + 1],
+                           SGAI_N_EMBED * sizeof(st->kv->k[0][0][0]));
+                    memcpy(st->kv->v[l][t], st->kv->v[l][t + 1],
+                           SGAI_N_EMBED * sizeof(st->kv->v[0][0][0]));
+#ifdef SGAI_KV_INT8
+                    memcpy(st->kv->ks[l][t], st->kv->ks[l][t + 1],
+                           SGAI_KV_NSCALE * sizeof(float));
+                    memcpy(st->kv->vs[l][t], st->kv->vs[l][t + 1],
+                           SGAI_KV_NSCALE * sizeof(float));
+#endif
+                }
+            }
+        }
+        if (st->seq_len < SGAI_CTX)
+            st->tokens[st->seq_len++] = input_token;
+    }
     return next_tok;
 }
 

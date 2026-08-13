@@ -74,6 +74,12 @@
     ((12 + SGAI_VOCAB * SGAI_N_EMBED                                       \
         + SGAI_N_LAYERS * SGAI_LAYER_BYTES(SGAI_WEIGHT_BITS) + 7) & ~7)
 
+/* Same, for a blob whose width and depth are not the build's defaults.  The
+ * dual-processor consensus holds a 2-bit 8-layer blob and an 8-bit N-layer one
+ * in RDRAM at the same time, so one macro cannot size both. */
+#define SGAI_WEIGHT_BUF_N(bits, nl) \
+    ((12 + SGAI_VOCAB * SGAI_N_EMBED + (nl) * SGAI_LAYER_BYTES(bits) + 7) & ~7)
+
 // Weight layout for one attention layer (Q8: int8 weights, float16 scales)
 typedef struct {
     // Q8 packed weights (1 weight per byte, signed int8) + float16 scales (per 32-block)
@@ -160,10 +166,39 @@ typedef struct {
 } __attribute__((aligned(8))) SGAIKVCache;
 #endif
 
+/* Per-model activation scratch.
+ *
+ * These were `static` locals inside attention_layer(), which is correct for
+ * ONE model called sequentially and silently wrong for two models whose
+ * forward passes are interleaved -- which is exactly what the dual-processor
+ * consensus does, so that model's q would land in this model's q.  One
+ * scratch block per SGAIState makes the interleave safe by construction.
+ * 12,288 B each. */
+typedef struct {
+    float q[SGAI_N_EMBED];
+    float k_cur[SGAI_N_EMBED];
+    float v_cur[SGAI_N_EMBED];
+    float attn_out[SGAI_N_EMBED];
+    float proj_out[SGAI_N_EMBED];
+    float ff_out[SGAI_N_EMBED];
+    float residual[SGAI_N_EMBED];
+    float ff_buf[SGAI_N_EMBED * 4];
+    float attn_scores[SGAI_CTX];
+    float vw[SGAI_CTX];
+} __attribute__((aligned(8))) SGAIScratch;
+
+/* Which processor runs this model's matmuls. */
+#define SGAI_ENGINE_CPU 0
+#define SGAI_ENGINE_RSP 1
+
 // Main inference state
 typedef struct {
     const SGAIHeader *weights;  // Points into ROM
     SGAIKVCache *kv;            // In RDRAM (heap-allocated)
+    SGAIScratch *sc;            // Activation scratch (NULL = use the shared one)
+    int engine;                 // SGAI_ENGINE_CPU / SGAI_ENGINE_RSP
+    int n_layers;               // From the blob header, <= SGAI_N_LAYERS
+    int pse;                    // 1 = Physarum router + burst entropy active
     float x[SGAI_N_EMBED];     // Current token embedding
     float logits[SGAI_VOCAB];  // Output logits
     float em_scale;             // Embedding scale factor
@@ -178,6 +213,28 @@ typedef struct {
 
 // API
 void sgai_init(SGAIState *state, const void *rom_weights);
+/* Same, but says which processor runs the matmuls and where the scratch is.
+ * engine == SGAI_ENGINE_RSP permutes the weight tensors in place into the RSP
+ * kernel's lane order, after which the CPU kernels can no longer read them. */
+void sgai_init_ex(SGAIState *state, const void *rom_weights,
+                  int engine, SGAIScratch *scratch, int pse);
+
+/* One token through TWO models at once, their logits summed.
+ *
+ * a runs on the CPU, b on the RSP, and b's matmuls are dispatched so that a's
+ * CPU work runs underneath them rather than after them.  b's logits are scaled
+ * by 2^-shift before the sum: the two heads' logit magnitudes differ by a
+ * factor that has to be measured, and a naive sum is the louder model alone
+ * (measured on the sibling port at 54.7x; measured HERE in
+ * docs/N64_DUAL_FINDINGS.md).  Returns the token the VOTE chose, which is then
+ * fed to both models.
+ *
+ * Both models must have been sgai_init_ex'd with their own scratch. */
+uint8_t sgai_dual_next_token(SGAIState *a, SGAIState *b, int shift,
+                             uint8_t input_token, uint32_t temperature_q8);
+/* The combined logits from the last sgai_dual_next_token(), for the
+ * host-against-ROM check. */
+extern float sgai_dual_logits[SGAI_VOCAB];
 void sgai_reset(SGAIState *state);
 uint8_t sgai_next_token(SGAIState *state, uint8_t input_token, uint32_t temperature_q8);
 void sgai_generate(SGAIState *state, const uint8_t *prompt, int prompt_len,
