@@ -1662,14 +1662,39 @@ static void update_generating_step(void) {
             }
 #ifdef RATE_PROBE
             {
-                char rl[128];
+                /* The ORIGINAL counter, reproduced verbatim from
+                 * src/legend_of_elya.c at bf97959 (2026-02-22), the build
+                 * whose on-screen readout became the published "~60 tok/s":
+                 *
+                 *     int elapsed = G.frame - G.gen_start_frame;
+                 *     if (elapsed > 0)
+                 *         G.gen_toks_sec = (float)G.gen_out_count
+                 *                        * 60.0f / (float)elapsed;
+                 *
+                 * G.frame counts GAME LOOP ITERATIONS, and this loop
+                 * generates exactly one token per iteration.  So
+                 * gen_out_count and elapsed both advance by exactly 1 every
+                 * time this line runs, their ratio is pinned at ~1 by
+                 * construction, and the readout is pinned at the literal
+                 * 60.0f in the source.  It is a constant wearing the costume
+                 * of a measurement: it reads ~60 on any machine at any speed,
+                 * because nothing on the right-hand side depends on how long
+                 * anything took.  Printed here beside the vblank number so
+                 * the two can be compared on the same tokens in one run. */
+                int legacy_elapsed = G.frame - G.gen_start_frame;
+                float legacy = (legacy_elapsed > 0)
+                             ? (float)G.gen_out_count * 60.0f / (float)legacy_elapsed
+                             : 0.0f;
+                char rl[192];
                 sprintf(rl, "RATE HUD n=%d vbl=%u toks_vbl=%d.%02d "
-                            "toks_cp0=%d.%02d\n",
+                            "toks_cp0=%d.%02d toks_legacyframe=%d.%02d\n",
                         G.gen_out_count, (unsigned)elapsed_vbl,
                         (int)G.perf_toks_precise,
                         (int)((G.perf_toks_precise - (int)G.perf_toks_precise) * 100.0f),
                         (int)G.perf_toks_cp0,
-                        (int)((G.perf_toks_cp0 - (int)G.perf_toks_cp0) * 100.0f));
+                        (int)((G.perf_toks_cp0 - (int)G.perf_toks_cp0) * 100.0f),
+                        (int)legacy,
+                        (int)((legacy - (int)legacy) * 100.0f));
                 rate_isv(rl);
             }
 #endif
