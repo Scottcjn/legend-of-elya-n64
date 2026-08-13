@@ -537,6 +537,11 @@ def main() -> None:
     p.add_argument("--ctx", type=int, default=128)
     p.add_argument("--steps", type=int, default=12000)
     p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--micro-batch", type=int, default=0,
+                   help="split each --batch-size step into equal micro-batches of "
+                        "this many rows and accumulate the gradient.  Same "
+                        "arithmetic, less peak GPU memory; 0 = off.  Must divide "
+                        "--batch-size or the means would not be equal-weighted.")
     p.add_argument("--lr", type=float, default=1.5e-3)
     p.add_argument("--min-lr-ratio", type=float, default=0.02)
     p.add_argument("--warmup", type=int, default=400)
@@ -605,11 +610,30 @@ def main() -> None:
     final_val, final_fit = float("nan"), float("nan")
     hist: List[Dict[str, float]] = []
     t0 = time.time()
+    micro = args.micro_batch or args.batch_size
+    if args.batch_size % micro:
+        raise SystemExit(f"--micro-batch {micro} does not divide --batch-size {args.batch_size}")
+    n_micro = args.batch_size // micro
     for step in range(1, args.steps + 1):
         x, y = train_data.batch(args.batch_size, rng_t)
-        loss = F.cross_entropy(model(x).reshape(-1, VOCAB), y.reshape(-1))
         opt.zero_grad(set_to_none=True)
-        loss.backward()
+        if n_micro == 1:
+            loss = F.cross_entropy(model(x).reshape(-1, VOCAB), y.reshape(-1))
+            loss.backward()
+        else:
+            # Gradient accumulation over EQUAL-SIZED micro-batches.  The step
+            # loss is the mean over batch_size*ctx tokens; equal micro-batches
+            # make "mean of the means" the same quantity, so dividing each
+            # micro-loss by n_micro reproduces the full-batch gradient to
+            # float32 rounding.  Measured, not assumed: see F-DC001.
+            tot = 0.0
+            for mb in range(n_micro):
+                xs = x[mb * micro:(mb + 1) * micro]
+                ys = y[mb * micro:(mb + 1) * micro]
+                l = F.cross_entropy(model(xs).reshape(-1, VOCAB), ys.reshape(-1))
+                (l / n_micro).backward()
+                tot += float(l.item()) / n_micro
+            loss = torch.tensor(tot)
         gn = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         opt.step()
         sched.step()
