@@ -2111,13 +2111,29 @@ static void game_init(void) {
             const char *p0 = RATE_PROMPT;
             int P = (int)strlen(p0);
             static char out[RATE_NGEN + 1];
-            uint64_t cp0_cum = 0;
-            uint32_t t0, t1, vb0, vb1;
+            uint64_t cp0_cum = 0, cp0_prompt = 0;
+            uint32_t t0, t1, vb0, vb1, vbp0, vbp1;
             uint8_t tok = 0;
 
+            /* Prompt ingestion is timed SEPARATELY and never folded into
+             * tok/s.  It is one forward pass per prompt byte with the output
+             * discarded, so it costs the same per token as generation does,
+             * and a persona-prefixed prompt is long enough that including it
+             * in the denominator halves the reported rate (that bug is
+             * F-RT004).  Quoted on its own, as a latency, which is what it
+             * is to a player: the wait before the first character appears. */
             sgai_reset(&G.ai);
+            vbp0 = g_vbl;
+            asm volatile("mfc0 %0, $9" : "=r"(t0));
             for (int i = 0; i < P; i++)
                 tok = sgai_next_token(&G.ai, (uint8_t)p0[i], 0);
+            asm volatile("mfc0 %0, $9" : "=r"(t1));
+            vbp1 = g_vbl;
+            cp0_prompt = (uint32_t)(t1 - t0);
+            sprintf(pl, "RATE B PROMPT toks=%d cp0=%llu vbl=%u\n",
+                    P, (unsigned long long)cp0_prompt,
+                    (unsigned)(vbp1 - vbp0));
+            ISV(pl);
 
             ISV("RATE B_START\n");
             vb0 = g_vbl;

@@ -1,0 +1,37 @@
+     1.410  Loaded rate_rsp_ingame
+     1.805  Vulkan Enabled: using paraLLEl-RDP
+     2.294  RATE INIT rdy=1 bits=2 ctx=128 vi_hz_x100=5994 tv=1
+     2.294  RATE A_START
+    11.647  RATE A cp0=234375002 vbl=299 cp0_sec_x1000=5000 vbl_sec_x1000=4988
+    11.647  RATE A_END
+    31.320  RATE B_START
+    44.264  RATE B toks=16 cp0=342266909 vbl=437
+    44.265  RATE B tps_cp0_x1000=2191 tps_vbl_x1000=2194
+    44.265  RATE B TEXT all me Sophia El
+    44.265  RATE B_END
+    44.265  RATE RSPPATH rsp=1968 cpu=0
+    44.265  RATE_DONE
+    65.172  RATE HUD n=1 vbl=27 toks_vbl=2.22 toks_cp0=2.24 toks_legacyframe=60.00
+    65.943  RATE HUD n=2 vbl=54 toks_vbl=2.22 toks_cp0=2.24 toks_legacyframe=60.00
+    66.700  RATE HUD n=3 vbl=81 toks_vbl=2.21 toks_cp0=2.24 toks_legacyframe=60.00
+    67.539  RATE HUD n=4 vbl=107 toks_vbl=2.24 toks_cp0=2.23 toks_legacyframe=60.00
+    68.459  RATE HUD n=5 vbl=135 toks_vbl=2.21 toks_cp0=2.23 toks_legacyframe=60.00
+    69.412  RATE HUD n=6 vbl=162 toks_vbl=2.21 toks_cp0=2.22 toks_legacyframe=60.00
+    70.361  RATE HUD n=7 vbl=189 toks_vbl=2.22 toks_cp0=2.22 toks_legacyframe=60.00
+    71.231  RATE HUD n=8 vbl=216 toks_vbl=2.22 toks_cp0=2.22 toks_legacyframe=60.00
+    72.050  RATE HUD n=9 vbl=244 toks_vbl=2.21 toks_cp0=2.21 toks_legacyframe=60.00
+    72.833  RATE HUD n=10 vbl=272 toks_vbl=2.20 toks_cp0=2.21 toks_legacyframe=60.00
+    73.657  RATE HUD n=11 vbl=300 toks_vbl=2.19 toks_cp0=2.20 toks_legacyframe=60.00
+    74.531  RATE HUD n=12 vbl=328 toks_vbl=2.19 toks_cp0=2.19 toks_legacyframe=60.00
+    75.352  RATE HUD n=13 vbl=356 toks_vbl=2.18 toks_cp0=2.19 toks_legacyframe=60.00
+    76.175  RATE HUD n=14 vbl=384 toks_vbl=2.18 toks_cp0=2.18 toks_legacyframe=60.00
+    77.031  RATE HUD n=15 vbl=413 toks_vbl=2.17 toks_cp0=2.18 toks_legacyframe=60.00
+    77.955  RATE HUD n=16 vbl=441 toks_vbl=2.17 toks_cp0=2.17 toks_legacyframe=60.00
+    78.909  RATE HUD n=17 vbl=470 toks_vbl=2.16 toks_cp0=2.16 toks_legacyframe=60.00
+    79.855  RATE HUD n=18 vbl=499 toks_vbl=2.16 toks_cp0=2.16 toks_legacyframe=60.00
+    80.768  RATE HUD n=19 vbl=529 toks_vbl=2.15 toks_cp0=2.15 toks_legacyframe=60.00
+    80.769  RATE HUD FINAL out=19 chars=19 vbl=529 toks_vbl_x1000=2152 toks_cp0_x1000=2156
+    80.769  RATE HUD TEXT Call me Sophia Elya
+    80.769  RATE_INGAME_DONE
+HOSTCLOCK phase A: 9.353 s wall
+HOSTCLOCK phase B: 12.944 s wall
