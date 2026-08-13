@@ -344,6 +344,30 @@ Consequences, stated rather than tuned away:
 - Nothing anywhere in this repo should be quoted past three significant
   figures until that run happens.
 
+## F-RT011 — the ROM in the repository was a probe build
+
+Found while restoring the tree, not while looking for it. `legend_of_elya.z64`
+as committed at `ad93f79` — the file `README.md` links as **Download ROM** —
+contains the strings `A_START` and `_INGAME_DONE`. It was built with
+`-DRATE_PROBE -DRATE_INGAME`. Anyone who downloaded it got the measurement
+harness: a five-second spin loop, sixteen tokens generated headless, then a
+dialog auto-started in the render loop. Not the game.
+
+```
+$ strings -n 4 legend_of_elya.z64 | grep -E "A_START|_INGAME_DONE"
+A_START
+_INGAME_DONE
+```
+
+Replaced with a clean `make base SGAI_BITS=2`. Verified three ways: no probe
+strings in the binary, the build is byte-reproducible across two runs
+(sha256 `94cb7772...` both times), and it boots and runs 90 s under ares with
+no crash output.
+
+Instrumentation belongs in a probe build. The rule that made this session's
+numbers trustworthy — the tokens must not change — has a companion: the
+artifact must not change either.
+
 ---
 
 # Summary
