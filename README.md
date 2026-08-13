@@ -158,8 +158,8 @@ F-RT010](docs/N64_RATE_FINDINGS.md).
 A third clock settles what the first two cannot, since both come from inside the
 emulated machine: the **host** clock, from `scripts/ares_rate_run.py`. 5.000
 emulated seconds took **9.4–14.5 host seconds** across runs — headless ares runs
-this workload at **0.35–0.63x real time**, varying with load on the host GPU. That is the emulator being slow, which is honest and
-harmless: emulated time is faithful, so a rate derived from it is a rate the
+this workload at **0.35–0.63x real time**, varying with load on the host GPU.
+That is the emulator being slow, which is honest and harmless: emulated time is faithful, so a rate derived from it is a rate the
 console would show. It is *host* wall clock that must not be quoted.
 
 ### Honest figures
@@ -210,19 +210,21 @@ agree to 4 % is itself a check on the measurement.
 
 ### What the new counter does
 
-It counts **VI vblanks**. Vblank is 59.94 Hz on NTSC hardware because that is the
+It counts **VI vblanks**. Vblank is ~59.9 Hz on NTSC hardware because that is the
 rate the console shoves fields at a television — a property of the video standard,
-not of anyone's belief about CPU speed. The Sega Genesis port of this engine already
+not of anyone's belief about CPU speed. (The build assumes exactly 59.94; ares
+measures 59.833, which is the 0.18 % above.) The Sega Genesis port of this engine already
 counts vblanks for exactly this reason.
 
 A consequence worth stating, because it is the tell that the number came off a
-clock: each token takes 48–50 vblanks, so the reported rate is **quantised to
-59.94/k** — 1.25, 1.22, 1.20 and nothing in between. Arithmetic that is not
+clock: each token takes 48–50 vblanks on the scalar build and 27–28 on the RSP
+build, so the reported rate is **quantised to 59.94/k** — 1.25, 1.22, 1.20 and
+nothing in between. Arithmetic that is not
 measuring time does not quantise like that.
 
 CP0 COUNT is still computed, into `perf_toks_cp0`, and never displayed. It is kept
 so the two clocks can be compared on any target — including silicon — without a
-rebuild. On the two builds above they agree to 0.19 % and 0.08 %.
+rebuild. On the two builds above they agree to 0.16 % and 0.09 %.
 
 The denominator was also fixed to cover the output phase only. It previously ran
 from the start of prompt ingestion while the numerator counted output tokens only,
