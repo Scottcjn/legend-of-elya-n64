@@ -1,0 +1,35 @@
+tern tern8_s1337.seq layers=8   int8 int84_s1337.seq layers=4
+logit RMS  ternary 7.8194  int8 8.2921  ratio 1.060x  -> shift0
+
+-- ROM cross-check, prompt 'sage says: Who are you?: ', 16 tokens --
+  TERN         'Call me Sophia E'
+  INT8         'Calobe corad for'
+  VOTE_shift0  'Call me Sophia E'
+  VOTE_shift1  'Call me Sophia E'
+  VOTE_shift2  'Call me Sophia E'
+  VOTE_shift5  'Call me Sophia E'
+
+-- VERIFY, teacher-forced, shift0 --
+  VER0 T ha ire you?: S am Sophia,Elya. btyays.
+  VER0 I ha ire you?: S am Sophia,Elya. bt ars.
+  VER0 V ha ire you?: S am Sophia,Elya. btways.
+  VER1 T hat is tour name?: S audcotcorhia Elya.
+  VER1 I hat is tour name?: S aupao aophia Elya.
+  VER1 V hat is tour name?: S aupao cophia Elya.
+  VER2 T hml me aour name.: Iy name :iophia Elya.
+  VER2 I hml me aour name.: Iy pame : ophia Elya.
+  VER2 V hml me aour name.: Iy name :iophia Elya.
+  VER3 T hare are you from?: Ehr Victorian Study  Wy heme.
+  VER3 I hare are you from?: Ehe Victorian Study  ay heme.
+  VER3 V hare are you from?: Ehe Victorian Study  ay heme.
+  VER4 T hat is tour nurpose?: W auird Wgdottt se.w ed e 
+  VER4 I hat is tour nurpose?: H auirdsWndeerg seuw e  er
+  VER4 V hat is tour nurpose?: H auird Wndhe t se.w ed e 
+  VER5 T hat io Iou lo?: Ialpihrrerture e,iort.ahith.
+  VER5 I hat io you lo?: Ialpitreentur ,e ronl.shurhe
+  VER5 V hat io Iou lo?: Ialpihrrenture e totd.ahithe
+  VERIFY n=258 tern=189 int8=191 vote=197
+
+-- held-out next-char accuracy, 44 lines, 1760 chars of text --
+  single      992/1716     57.81%
+  single1     979/1716     57.05%

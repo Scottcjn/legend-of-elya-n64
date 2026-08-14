@@ -1,0 +1,27 @@
+tern tern8_s1337.seq layers=8   int8 int84_s7.seq layers=4
+logit RMS  ternary 7.8194  int8 8.2616  ratio 1.057x  -> shift0
+
+-- ROM cross-check, prompt 'sage says: Who are you?: ', 16 tokens --
+  TERN         'Call me Sophia E'
+  INT8         'Call me Sophia E'
+  VOTE_shift0  'Call me Sophia E'
+  VOTE_shift1  'Call me Sophia E'
+  VOTE_shift2  'Call me Sophia E'
+  VOTE_shift5  'Call me Sophia E'
+
+-- held-out next-char accuracy, 44 lines, 1760 chars of text --
+  single      992/1716     57.81%
+  single1     984/1716     57.34%
+  raw        1024/1716     59.67%
+  shift1     1017/1716     59.27%
+  shift5      996/1716     58.04%
+  norm       1024/1716     59.67%
+  agree      1024/1716     59.67%
+
+-- paired significance, McNemar exact, vs each member --
+  raw      vs ternary: +71/-39 p=0.002944   vs int8: +78/-38 p=0.0002583
+  shift1   vs ternary: +50/-25 p=0.005228   vs int8: +89/-56 p=0.007656
+  shift5   vs ternary: +6/-2 p=0.2891   vs int8: +106/-94 p=0.4368
+  norm     vs ternary: +70/-38 p=0.002685   vs int8: +79/-39 p=0.0002927
+  agree    vs ternary: +71/-39 p=0.002944   vs int8: +78/-38 p=0.0002583
+  members disagree 507/1716 = 29.5%   both-right 886  tern-only 106  int8-only 98  neither 626

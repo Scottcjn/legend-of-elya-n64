@@ -236,6 +236,78 @@ static void run_arm(const char *name, int mode)
     sprintf(pl, "DUAL %s GEN_END\n", name); ISV(pl);
 }
 
+/* ---------------------------------------------------------------- VERIFY
+ * Teacher-forced next-character prediction over held-out text, on console.
+ *
+ * The accuracy claim for the vote is a HOST measurement over 1716 characters
+ * of the paraphrase holdout, and 1716 tokens at 1.04 tok/s is 27 minutes of
+ * emulated time per arm.  Rather than pay that, this verifies the thing that
+ * makes the host number transferable: that the ROM's three picks are the
+ * host's three picks, character for character, on the same text.  If the
+ * arithmetic is identical the accuracy is identical by construction.
+ *
+ * One dual forward pass per fed character serves all three arms: the vote's
+ * token is what sgai_dual_next_token() returns, and each member's own argmax
+ * is read straight out of its logits afterwards.  The models are fed the TRUE
+ * next character every step, so the members stay in lockstep -- free running
+ * would measure divergence instead of agreement.
+ *
+ * The lines are the FIRST SIX of training/consensus.py held_lines(), which is
+ * train_mix.split_v7()'s paraphrase holdout: the last answer of every key with
+ * three or more answers.  Text this model has never been trained on. */
+static const char *VERIFY_LINES[] = {
+    "Who are you?: I am Sophia Elya, always.",
+    "What is your name?: I go by Sophia Elya.",
+    "Tell me your name.: My name? Sophia Elya.",
+    "Where are you from?: The Victorian Study, my home.",
+    "What is your purpose?: I guard ancient knowledge.",
+    "What do you do?: Help adventurers find truth.",
+};
+#define VERIFY_NLINES ((int)(sizeof(VERIFY_LINES) / sizeof(VERIFY_LINES[0])))
+
+static int argmax_band(const float *lg)
+{
+    int best = 32;
+    for (int i = 33; i <= 126; i++) if (lg[i] > lg[best]) best = i;
+    return best;
+}
+
+static void run_verify(void)
+{
+    static char pk_t[192], pk_i[192], pk_v[192];
+    int hit_t = 0, hit_i = 0, hit_v = 0, n = 0;
+    uint32_t vb0 = g_vbl;
+
+    ISV("DUAL VERIFY_START\n");
+    for (int li = 0; li < VERIFY_NLINES; li++) {
+        const char *L = VERIFY_LINES[li];
+        int len = (int)strlen(L);
+        int m = 0;
+        sgai_reset(&ST_T);
+        sgai_reset(&ST_I);
+        for (int i = 0; i < len - 1 && i < SGAI_CTX - 1 && m < 190; i++) {
+            uint8_t v = sgai_dual_next_token(&ST_T, &ST_I, DUAL_SHIFT,
+                                             (uint8_t)L[i], 0);
+            int pt = argmax_band(ST_T.logits);
+            int pi = argmax_band(ST_I.logits);
+            uint8_t nxt = (uint8_t)L[i + 1];
+            pk_t[m] = (char)pt; pk_i[m] = (char)pi; pk_v[m] = (char)v;
+            m++; n++;
+            if (pt == nxt) hit_t++;
+            if (pi == nxt) hit_i++;
+            if (v  == nxt) hit_v++;
+        }
+        pk_t[m] = 0; pk_i[m] = 0; pk_v[m] = 0;
+        sprintf(pl, "DUAL VER%d T %s\n", li, pk_t); ISV(pl);
+        sprintf(pl, "DUAL VER%d I %s\n", li, pk_i); ISV(pl);
+        sprintf(pl, "DUAL VER%d V %s\n", li, pk_v); ISV(pl);
+    }
+    sprintf(pl, "DUAL VERIFY n=%d tern=%d int8=%d vote=%d shift=%d vbl=%u\n",
+            n, hit_t, hit_i, hit_v, DUAL_SHIFT, (unsigned)(g_vbl - vb0));
+    ISV(pl);
+    ISV("DUAL VERIFY_END\n");
+}
+
 int main(void)
 {
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, 2, GAMMA_NONE, ANTIALIAS_RESAMPLE);
@@ -273,6 +345,8 @@ int main(void)
     if (!ST_T.is_loaded || !ST_I.is_loaded || !ST_T.kv || !ST_I.kv) {
         ISV("DUAL FAIL init\n"); ISV("DUAL_DONE\n"); while (1) {}
     }
+
+    run_verify();
 
     run_arm("TERN", 0);
     run_arm("INT8", 1);

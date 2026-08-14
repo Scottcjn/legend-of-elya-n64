@@ -1,0 +1,4 @@
+tern tern8_s7.seq layers=8   int8 int84_s23.seq layers=4
+logit RMS  ternary 7.9705  int8 8.3663  ratio 1.050x  -> shift0
+
+-- ROM cross-check, prompt 'sage says: Who are you?: ', 16 tokens --

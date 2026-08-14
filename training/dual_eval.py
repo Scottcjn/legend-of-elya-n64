@@ -58,6 +58,45 @@ def rom_decode(models, prompt, n_new, rule, scales=None, lo=32, hi=126):
     return bytes(out).decode("ascii", "replace")
 
 
+VERIFY_LINES = [
+    "Who are you?: I am Sophia Elya, always.",
+    "What is your name?: I go by Sophia Elya.",
+    "Tell me your name.: My name? Sophia Elya.",
+    "Where are you from?: The Victorian Study, my home.",
+    "What is your purpose?: I guard ancient knowledge.",
+    "What do you do?: Help adventurers find truth.",
+]
+
+
+def verify(mt, mi, shift, lo=32, hi=126):
+    """The host side of dual_probe.c's VERIFY arm, step for step.
+
+    Teacher-forced: every step feeds the TRUE character, so the two members
+    stay in lockstep and the ROM's three pick strings can be compared against
+    these three character for character.  That comparison is what makes the
+    host accuracy number transferable to the console without generating 1716
+    tokens on a 1 tok/s machine."""
+    rows = []
+    ht = hi_ = hv = n = 0
+    for L in VERIFY_LINES:
+        rt, ri = C.Runner(mt), C.Runner(mi)
+        b = L.encode()
+        pt_s, pi_s, pv_s = [], [], []
+        for i in range(len(b) - 1):
+            lt, li = rt.step(b[i]), ri.step(b[i])
+            pt = int(np.argmax(lt[lo:hi + 1])) + lo
+            pi = int(np.argmax(li[lo:hi + 1])) + lo
+            pv = int(np.argmax((lt + li / float(1 << shift))[lo:hi + 1])) + lo
+            pt_s.append(pt); pi_s.append(pi); pv_s.append(pv)
+            nxt = b[i + 1]
+            n += 1
+            ht += pt == nxt; hi_ += pi == nxt; hv += pv == nxt
+        rows.append((bytes(pt_s).decode("ascii", "replace"),
+                     bytes(pi_s).decode("ascii", "replace"),
+                     bytes(pv_s).decode("ascii", "replace")))
+    return rows, (n, ht, hi_, hv)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tern", required=True)
@@ -66,6 +105,8 @@ def main():
     ap.add_argument("--rules", default="single,single1,raw,shift1,shift5,norm,agree")
     ap.add_argument("--skip-keys", action="store_true")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--verify-shift", type=int, default=None,
+                    help="print the ROM VERIFY arm's expected pick strings")
     a = ap.parse_args()
 
     mt, mi = E12.load_seq(a.tern), E12.load_seq(a.int8)
@@ -93,6 +134,15 @@ def main():
                                                  "shift%d" % sh, sc)
     for k, v in romtxt.items():
         print("  %-12s %r" % (k, v), flush=True)
+
+    if a.verify_shift is not None:
+        rows, (n, ht, hi_, hv) = verify(mt, mi, a.verify_shift)
+        print("\n-- VERIFY, teacher-forced, shift%d --" % a.verify_shift, flush=True)
+        for i, (t, ii, v) in enumerate(rows):
+            print("  VER%d T %s" % (i, t), flush=True)
+            print("  VER%d I %s" % (i, ii), flush=True)
+            print("  VER%d V %s" % (i, v), flush=True)
+        print("  VERIFY n=%d tern=%d int8=%d vote=%d" % (n, ht, hi_, hv), flush=True)
 
     held, stats = C.held_lines()
     print("\n-- held-out next-char accuracy, %d lines, %d chars of text --"
