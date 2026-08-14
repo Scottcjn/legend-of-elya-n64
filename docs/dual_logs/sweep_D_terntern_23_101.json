@@ -1,0 +1,138 @@
+{
+  "logit_rms": [
+    7.949208419770002,
+    7.980769593268633
+  ],
+  "ratio": 1.0039703542581846,
+  "rom": {
+    "TERN": "Sophia Elya of E",
+    "INT8": "Call me Sophia E",
+    "VOTE_shift0": "Call me Sophia E",
+    "VOTE_shift1": "Call me Sophia E",
+    "VOTE_shift2": "Sophia Elya of E",
+    "VOTE_shift5": "Sophia Elya of E"
+  },
+  "nextchar": {
+    "single": [
+      985,
+      1716
+    ],
+    "single1": [
+      993,
+      1716
+    ],
+    "raw": [
+      1004,
+      1716
+    ],
+    "shift1": [
+      1017,
+      1716
+    ],
+    "shift5": [
+      987,
+      1716
+    ],
+    "norm": [
+      1004,
+      1716
+    ],
+    "agree": [
+      1004,
+      1716
+    ],
+    "_diag": {
+      "disagree": 483,
+      "both": 899,
+      "tern_only": 86,
+      "int8_only": 94,
+      "neither": 637,
+      "n": 1716
+    }
+  },
+  "mcnemar": {
+    "raw": {
+      "vs_tern": [
+        40,
+        59,
+        0.06990057369494637
+      ],
+      "vs_int8": [
+        40,
+        51,
+        0.29446978456853307
+      ]
+    },
+    "shift1": {
+      "vs_tern": [
+        20,
+        52,
+        0.00020771603022674048
+      ],
+      "vs_int8": [
+        51,
+        75,
+        0.040035759356283854
+      ]
+    },
+    "shift5": {
+      "vs_tern": [
+        2,
+        4,
+        0.6875
+      ],
+      "vs_int8": [
+        91,
+        85,
+        0.7063708402623414
+      ]
+    },
+    "norm": {
+      "vs_tern": [
+        40,
+        59,
+        0.06990057369494637
+      ],
+      "vs_int8": [
+        40,
+        51,
+        0.29446978456853307
+      ]
+    },
+    "agree": {
+      "vs_tern": [
+        40,
+        59,
+        0.06990057369494637
+      ],
+      "vs_int8": [
+        40,
+        51,
+        0.29446978456853307
+      ]
+    }
+  },
+  "keys": {},
+  "held_lines": 44,
+  "split": {
+    "IDENTITY_PAIRS": {
+      "lines": 64,
+      "keys": 33,
+      "held": 8,
+      "train_lines": 56
+    },
+    "QA_PAIRS": {
+      "lines": 169,
+      "keys": 94,
+      "held": 20,
+      "train_lines": 149
+    },
+    "CORPUS_LINES": {
+      "lines": 167,
+      "keys": 0,
+      "held": 16,
+      "train_lines": 151
+    },
+    "held_total": 44
+  }
+}

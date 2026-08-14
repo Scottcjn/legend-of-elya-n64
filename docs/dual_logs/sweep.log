@@ -80,3 +80,66 @@
   shift1   vs ternary: +50/-25 p=0.005228   vs int8: +89/-56 p=0.007656
   norm     vs ternary: +70/-38 p=0.002685   vs int8: +79/-39 p=0.0002927
 == C_cross_7_23  tern8_s7.seq  int84_s23.seq
+  single     1003/1716     58.45%
+  single1     965/1716     56.24%
+  raw        1031/1716     60.08%
+  shift1     1032/1716     60.14%
+  norm       1032/1716     60.14%
+  raw      vs ternary: +64/-36 p=0.006637   vs int8: +91/-25 p=5.313e-10
+  shift1   vs ternary: +50/-21 p=0.0007668   vs int8: +106/-39 p=2.403e-08
+  norm     vs ternary: +64/-35 p=0.004641   vs int8: +92/-25 p=3.366e-10
+== C_cross_23_101  tern8_s23.seq  int84_s101.seq
+  single      985/1716     57.40%
+  single1     986/1716     57.46%
+  raw        1030/1716     60.02%
+  shift1     1020/1716     59.44%
+  norm       1028/1716     59.91%
+  raw      vs ternary: +68/-23 p=2.522e-06   vs int8: +77/-33 p=3.297e-05
+  shift1   vs ternary: +50/-15 p=1.572e-05   vs int8: +84/-50 p=0.004188
+  norm     vs ternary: +66/-23 p=5.69e-06   vs int8: +77/-35 p=8.98e-05
+== C_cross_101_1337  tern8_s101.seq  int84_s1337.seq
+  single      993/1716     57.87%
+  single1     979/1716     57.05%
+  raw        1017/1716     59.27%
+  shift1     1011/1716     58.92%
+  norm       1017/1716     59.27%
+  raw      vs ternary: +56/-32 p=0.01375   vs int8: +77/-39 p=0.0005341
+  shift1   vs ternary: +40/-22 p=0.03002   vs int8: +84/-52 p=0.007624
+  norm     vs ternary: +55/-31 p=0.01267   vs int8: +78/-40 p=0.0005979
+== D_terntern_1337_7  tern8_s1337.seq  tern8_s7.seq
+  single      992/1716     57.81%
+  single1    1003/1716     58.45%
+  raw        1038/1716     60.49%
+  shift1     1032/1716     60.14%
+  norm       1038/1716     60.49%
+  raw      vs ternary: +73/-27 p=4.692e-06   vs int8: +71/-36 p=0.0009232
+  shift1   vs ternary: +55/-15 p=1.653e-06   vs int8: +82/-53 p=0.01564
+  norm     vs ternary: +73/-27 p=4.692e-06   vs int8: +71/-36 p=0.0009232
+== D_terntern_7_23  tern8_s7.seq  tern8_s23.seq
+  single     1003/1716     58.45%
+  single1     985/1716     57.40%
+  raw        1044/1716     60.84%
+  shift1     1044/1716     60.84%
+  norm       1044/1716     60.84%
+  raw      vs ternary: +73/-32 p=7.808e-05   vs int8: +85/-26 p=1.699e-08
+  shift1   vs ternary: +55/-14 p=6.922e-07   vs int8: +103/-44 p=1.255e-06
+  norm     vs ternary: +73/-32 p=7.808e-05   vs int8: +85/-26 p=1.699e-08
+== D_terntern_23_101  tern8_s23.seq  tern8_s101.seq
+  single      985/1716     57.40%
+  single1     993/1716     57.87%
+  raw        1004/1716     58.51%
+  shift1     1017/1716     59.27%
+  norm       1004/1716     58.51%
+  raw      vs ternary: +59/-40 p=0.0699   vs int8: +51/-40 p=0.2945
+  shift1   vs ternary: +52/-20 p=0.0002077   vs int8: +75/-51 p=0.04004
+  norm     vs ternary: +59/-40 p=0.0699   vs int8: +51/-40 p=0.2945
+== D_terntern_101_1337  tern8_s101.seq  tern8_s1337.seq
+  single      993/1716     57.87%
+  single1     992/1716     57.81%
+  raw        1019/1716     59.38%
+  shift1     1015/1716     59.15%
+  norm       1019/1716     59.38%
+  raw      vs ternary: +58/-32 p=0.008046   vs int8: +65/-38 p=0.01006
+  shift1   vs ternary: +43/-21 p=0.008147   vs int8: +75/-52 p=0.05049
+  norm     vs ternary: +58/-32 p=0.008046   vs int8: +65/-38 p=0.01006
+SWEEP DONE

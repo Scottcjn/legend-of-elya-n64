@@ -2,3 +2,26 @@ tern tern8_s7.seq layers=8   int8 int84_s23.seq layers=4
 logit RMS  ternary 7.9705  int8 8.3663  ratio 1.050x  -> shift0
 
 -- ROM cross-check, prompt 'sage says: Who are you?: ', 16 tokens --
+  TERN         'Sophia Elya of E'
+  INT8         'Sophia Elya, you'
+  VOTE_shift0  'Sophia Elya of E'
+  VOTE_shift1  'Sophia Elya of E'
+  VOTE_shift2  'Sophia Elya of E'
+  VOTE_shift5  'Sophia Elya of E'
+
+-- held-out next-char accuracy, 44 lines, 1760 chars of text --
+  single     1003/1716     58.45%
+  single1     965/1716     56.24%
+  raw        1031/1716     60.08%
+  shift1     1032/1716     60.14%
+  shift5     1011/1716     58.92%
+  norm       1032/1716     60.14%
+  agree      1031/1716     60.08%
+
+-- paired significance, McNemar exact, vs each member --
+  raw      vs ternary: +64/-36 p=0.006637   vs int8: +91/-25 p=5.313e-10
+  shift1   vs ternary: +50/-21 p=0.0007668   vs int8: +106/-39 p=2.403e-08
+  shift5   vs ternary: +10/-2 p=0.03857   vs int8: +116/-70 p=0.0009181
+  norm     vs ternary: +64/-35 p=0.004641   vs int8: +92/-25 p=3.366e-10
+  agree    vs ternary: +64/-36 p=0.006637   vs int8: +91/-25 p=5.313e-10
+  members disagree 493/1716 = 28.7%   both-right 888  tern-only 115  int8-only 77  neither 636

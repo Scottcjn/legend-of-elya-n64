@@ -1,0 +1,138 @@
+{
+  "logit_rms": [
+    7.949208419770002,
+    8.39983144029975
+  ],
+  "ratio": 1.0566877853408685,
+  "rom": {
+    "TERN": "Sophia Elya of E",
+    "INT8": "C code for MIPS ",
+    "VOTE_shift0": "Call me Sophia E",
+    "VOTE_shift1": "Call me Sophia E",
+    "VOTE_shift2": "Sophia Elya of E",
+    "VOTE_shift5": "Sophia Elya of E"
+  },
+  "nextchar": {
+    "single": [
+      985,
+      1716
+    ],
+    "single1": [
+      986,
+      1716
+    ],
+    "raw": [
+      1030,
+      1716
+    ],
+    "shift1": [
+      1020,
+      1716
+    ],
+    "shift5": [
+      988,
+      1716
+    ],
+    "norm": [
+      1028,
+      1716
+    ],
+    "agree": [
+      1030,
+      1716
+    ],
+    "_diag": {
+      "disagree": 493,
+      "both": 894,
+      "tern_only": 91,
+      "int8_only": 92,
+      "neither": 639,
+      "n": 1716
+    }
+  },
+  "mcnemar": {
+    "raw": {
+      "vs_tern": [
+        23,
+        68,
+        2.5221536534654527e-06
+      ],
+      "vs_int8": [
+        33,
+        77,
+        3.296813651959347e-05
+      ]
+    },
+    "shift1": {
+      "vs_tern": [
+        15,
+        50,
+        1.5717029852739474e-05
+      ],
+      "vs_int8": [
+        50,
+        84,
+        0.004187533834532417
+      ]
+    },
+    "shift5": {
+      "vs_tern": [
+        1,
+        4,
+        0.375
+      ],
+      "vs_int8": [
+        89,
+        91,
+        0.9406117367092575
+      ]
+    },
+    "norm": {
+      "vs_tern": [
+        23,
+        66,
+        5.690249181613522e-06
+      ],
+      "vs_int8": [
+        35,
+        77,
+        8.980220370452065e-05
+      ]
+    },
+    "agree": {
+      "vs_tern": [
+        23,
+        68,
+        2.5221536534654527e-06
+      ],
+      "vs_int8": [
+        33,
+        77,
+        3.296813651959347e-05
+      ]
+    }
+  },
+  "keys": {},
+  "held_lines": 44,
+  "split": {
+    "IDENTITY_PAIRS": {
+      "lines": 64,
+      "keys": 33,
+      "held": 8,
+      "train_lines": 56
+    },
+    "QA_PAIRS": {
+      "lines": 169,
+      "keys": 94,
+      "held": 20,
+      "train_lines": 149
+    },
+    "CORPUS_LINES": {
+      "lines": 167,
+      "keys": 0,
+      "held": 16,
+      "train_lines": 151
+    },
+    "held_total": 44
+  }
+}

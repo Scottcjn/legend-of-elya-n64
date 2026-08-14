@@ -230,9 +230,12 @@ legend_of_elya_rsp_ovl.z64: $(BUILD_DIR)/legend_of_elya_rsp_ovl.dfs
 #   make dual EXTRA=-DDUAL_SHIFT=0  the naive sum, i.e. the failure mode
 dual: legend_of_elya_dual.z64
 
-$(BUILD_DIR)/legend_of_elya_dual.dfs: filesystem_dual/sophia_weights.bin filesystem_dual/sophia_int8.bin
+# DUALFS selects which pair of blobs is baked in, so the mixed-format ROM and
+# the same-format control are the same build with a different filesystem.
+DUALFS ?= filesystem_dual
+$(BUILD_DIR)/legend_of_elya_dual.dfs: $(DUALFS)/sophia_weights.bin $(DUALFS)/sophia_int8.bin
 	@mkdir -p $(BUILD_DIR)
-	$(N64_MKDFS) $@ filesystem_dual/
+	$(N64_MKDFS) $@ $(DUALFS)/
 
 $(BUILD_DIR)/dual_probe.o: dual_probe.c
 	@mkdir -p $(BUILD_DIR)

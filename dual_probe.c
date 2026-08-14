@@ -77,10 +77,19 @@ static char pl[256];
 #ifndef DUAL_INT8_LAYERS
 #define DUAL_INT8_LAYERS 4
 #endif
+/* Weight width of the RSP arm's blob.  8 is the whole premise -- the RSP
+ * fetches eight operands per transaction, so ternary's operand-traffic
+ * advantage vanishes there and only its unpack cost remains.  DUAL_B_BITS=2
+ * builds the control that tests it: the SAME model family on both processors,
+ * ternary on each, differing only in seed.  If that is not slower, the
+ * format split is not what is buying the speed. */
+#ifndef DUAL_B_BITS
+#define DUAL_B_BITS 8
+#endif
 
 /* ------------------------------------------------------------------- state */
 static uint8_t wt_buf[SGAI_WEIGHT_BUF_N(2, SGAI_N_LAYERS)] __attribute__((aligned(16)));
-static uint8_t wi_buf[SGAI_WEIGHT_BUF_N(8, DUAL_INT8_LAYERS)] __attribute__((aligned(16)));
+static uint8_t wi_buf[SGAI_WEIGHT_BUF_N(DUAL_B_BITS, DUAL_INT8_LAYERS)] __attribute__((aligned(16)));
 static SGAIState   ST_T, ST_I;
 static SGAIScratch SC_T, SC_I;
 static char outbuf[DUAL_NGEN + 1];

@@ -1,0 +1,138 @@
+{
+  "logit_rms": [
+    7.970459833741188,
+    7.9560691602528095
+  ],
+  "ratio": 0.9981944989638541,
+  "rom": {
+    "TERN": "Sophia Elya of E",
+    "INT8": "Sophia Elya of E",
+    "VOTE_shift0": "Sophia Elya of E",
+    "VOTE_shift1": "Sophia Elya of E",
+    "VOTE_shift2": "Sophia Elya of E",
+    "VOTE_shift5": "Sophia Elya of E"
+  },
+  "nextchar": {
+    "single": [
+      1003,
+      1716
+    ],
+    "single1": [
+      985,
+      1716
+    ],
+    "raw": [
+      1044,
+      1716
+    ],
+    "shift1": [
+      1044,
+      1716
+    ],
+    "shift5": [
+      1006,
+      1716
+    ],
+    "norm": [
+      1044,
+      1716
+    ],
+    "agree": [
+      1044,
+      1716
+    ],
+    "_diag": {
+      "disagree": 481,
+      "both": 897,
+      "tern_only": 106,
+      "int8_only": 88,
+      "neither": 625,
+      "n": 1716
+    }
+  },
+  "mcnemar": {
+    "raw": {
+      "vs_tern": [
+        32,
+        73,
+        7.808423662658282e-05
+      ],
+      "vs_int8": [
+        26,
+        85,
+        1.6986304619987468e-08
+      ]
+    },
+    "shift1": {
+      "vs_tern": [
+        14,
+        55,
+        6.921916920059638e-07
+      ],
+      "vs_int8": [
+        44,
+        103,
+        1.255080378394871e-06
+      ]
+    },
+    "shift5": {
+      "vs_tern": [
+        2,
+        5,
+        0.453125
+      ],
+      "vs_int8": [
+        84,
+        105,
+        0.14553062787215776
+      ]
+    },
+    "norm": {
+      "vs_tern": [
+        32,
+        73,
+        7.808423662658282e-05
+      ],
+      "vs_int8": [
+        26,
+        85,
+        1.6986304619987468e-08
+      ]
+    },
+    "agree": {
+      "vs_tern": [
+        32,
+        73,
+        7.808423662658282e-05
+      ],
+      "vs_int8": [
+        26,
+        85,
+        1.6986304619987468e-08
+      ]
+    }
+  },
+  "keys": {},
+  "held_lines": 44,
+  "split": {
+    "IDENTITY_PAIRS": {
+      "lines": 64,
+      "keys": 33,
+      "held": 8,
+      "train_lines": 56
+    },
+    "QA_PAIRS": {
+      "lines": 169,
+      "keys": 94,
+      "held": 20,
+      "train_lines": 149
+    },
+    "CORPUS_LINES": {
+      "lines": 167,
+      "keys": 0,
+      "held": 16,
+      "train_lines": 151
+    },
+    "held_total": 44
+  }
+}
