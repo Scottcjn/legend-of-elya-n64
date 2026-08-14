@@ -312,6 +312,32 @@ decided the sum — and that is what makes F-DU004's host accuracy number
 transferable to the console without generating 1716 tokens on a 1.04 tok/s
 machine: **the arithmetic is the host's arithmetic.**
 
+## F-DU008 — the shipped overlay ROM is 0.3 % slower, and the flush is not why
+
+The dual work touches two files the shipped `base-rsp-ovl` ROM also builds
+from, so it was re-measured against F-RT005's recorded baseline. RATE_PROBE,
+16 tokens, ternary, same blob; text `all me Sophia El` and
+`RSPPATH rsp=1968 cpu=0` in every case, i.e. **no behavioural change**.
+
+| build | CP0 (gen 16) | vbl | tok/s (vbl) |
+|---|---:|---:|---:|
+| F-RT005 baseline (`dual_logs/regress_ovl_split_driver.log`) | 342,959,075 | 437 | 2.194 |
+| with the unconditional `rspq_flush()` | 343,919,603 | 439 | 2.184 |
+| with the flush suppressed for the blocking caller | 344,066,493 | 439 | 2.184 |
+
+**+0.3 % CP0, +2 vblanks, −0.46 % tok/s** — above the 0.08 % run-to-run spread
+recorded in F-RT007, so it is real. **The flush is not the cause**: suppressing
+it for `rsp_matmul_pk()` (which blocks immediately and gains nothing from an
+early kick) is if anything a hair worse. The suppression is kept because it is
+the right shape, not because it bought anything, and the comment on
+`mm_noflush` says so.
+
+The remaining candidate is the change that had to happen for two models to
+coexist at all: `attention_layer()`'s activation buffers were `static` locals
+and are now reached through `state->sc->`, which is one extra indirection per
+access on every buffer in the layer. That is untested — it would need a build
+of the pre-refactor tree to attribute, and it has not been done.
+
 ---
 
 ## Summary — the four questions

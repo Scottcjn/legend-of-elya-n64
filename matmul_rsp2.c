@@ -251,6 +251,18 @@ uint32_t rsp_t_wait   = 0;
 uint32_t rsp_n_free   = 0;
 uint32_t rsp_n_blocked = 0;
 static int   mm_pending  = 0;     /* 1 = dispatched, end() not yet called */
+/* 1 = the caller is rsp_matmul_pk(), which blocks in end() immediately, so the
+ * early rspq_flush() in begin() would only pay for a kick that
+ * rspq_syncpoint_wait() is about to do anyway.  Kept because it is the right
+ * shape, NOT because it recovered anything -- measured on the shipped overlay
+ * ROM, RATE_PROBE, 16 tokens, text identical and RSPPATH rsp=1968 cpu=0 in
+ * every case:
+ *     F-RT005 baseline          342,959,075 CP0   437 vbl   2.194 tok/s
+ *     unconditional flush       343,919,603 CP0   439 vbl   2.184 tok/s
+ *     this suppression          344,066,493 CP0   439 vbl   2.184 tok/s
+ * The flush is not what costs the 0.3 %; suppressing it is if anything a hair
+ * worse.  See docs/N64_DUAL_FINDINGS.md F-DU008 for where the 0.3 % is. */
+static int   mm_noflush  = 0;
 static int   mm_zero     = 0;     /* activation vector was all zeros       */
 static float mm_sx       = 0.0f;  /* activation quantization scale         */
 #ifdef RSP_MM_OVERLAY
@@ -275,7 +287,10 @@ void rsp_matmul_pk(const uint8_t *weights, const uint16_t *scales,
                    const float *input, float *output,
                    int in_dim, int out_dim, int bits)
 {
-    if (rsp_matmul_begin(weights, input, in_dim, out_dim, bits)) {
+    mm_noflush = 1;
+    int ok = rsp_matmul_begin(weights, input, in_dim, out_dim, bits);
+    mm_noflush = 0;
+    if (ok) {
         rsp_matmul_end(scales, output, in_dim, out_dim, bits);
         return;
     }
@@ -450,8 +465,12 @@ int rsp_matmul_begin(const uint8_t *weights, const float *input,
      * end().  Without this line the split-dispatch driver is a lie: the RSP
      * would not start until the CPU came back to wait for it, so the "overlap"
      * would be exactly zero and every dispatch would be counted blocked.
-     * Measured either way, see docs/N64_DUAL_FINDINGS.md F-DU002. */
-    rspq_flush();
+     * Measured either way, see docs/N64_DUAL_FINDINGS.md F-DU002.
+     *
+     * Skipped when the caller is rsp_matmul_pk(), which blocks straight away
+     * and would gain nothing by being kicked early.  Measured neutral; see
+     * mm_noflush above for the three numbers. */
+    if (!mm_noflush) rspq_flush();
 #else
     rsp_load_data(rsp2_xi, (unsigned long)(in_dim * 2), DM_XI);
     rsp_load_data(rsp2_params, 64, 0);
