@@ -1,0 +1,46 @@
+     1.434  Loaded dual_s0b
+     1.757  Vulkan Enabled: using paraLLEl-RDP
+     2.214  DUAL INIT mem=8388608 tern_sz=2031628 cap=2031632 int8_sz=3407884 cap=3407888 ok=11
+     2.220  [96m[unusual] [0mRSP DMA writing to RDRAM address 0x253f8 which is cached (missing cache invalidation?)
+     2.220  	Cacheline was loaded at CPU PC: 0xffffffff8001b430
+     2.220  	RSP DMA started at RSP PC: 0x080
+     2.220  
+     2.611  DUAL MODELS tern rdy=1 bits=2 nl=8 | int8 rdy=1 bits=8 nl=4
+     2.611  DUAL KV tern=0x805e00b8 int8=0x806700c8 shift=0 ngen=16 ctx=128
+    29.024  DUAL TERN PROMPT toks=25 cp0=909129441 vbl=1161
+    29.024  DUAL TERN GEN_START
+    46.214  DUAL TERN GEN toks=16 cp0=605590390 vbl=773
+    46.214  DUAL TERN tps_vbl_x1000=1240 tps_cp0_x1000=1238
+    46.215  DUAL TERN RMS tern_x1000=6608 int8_x1000=0
+    46.215  DUAL TERN RSP calls=0 cpu=0 free=0 blocked=0
+    46.215  DUAL TERN RSPT stage=0 disp=0 wait=0 epi=0
+    46.215  DUAL TERN TEXT Call me Sophia E
+    46.215  DUAL TERN GEN_END
+    53.666  DUAL INT8 PROMPT toks=25 cp0=234478230 vbl=299
+    53.666  DUAL INT8 GEN_START
+    58.624  DUAL INT8 GEN toks=16 cp0=161679944 vbl=206
+    58.624  DUAL INT8 tps_vbl_x1000=4655 tps_cp0_x1000=4638
+    58.624  DUAL INT8 RMS tern_x1000=0 int8_x1000=7973
+    58.624  DUAL INT8 RSP calls=384 cpu=0 free=0 blocked=384
+    58.624  DUAL INT8 RSPT stage=3408099 disp=2175895 wait=43802219 epi=74247441
+    58.625  DUAL INT8 TEXT Calobe corad for
+    58.625  DUAL INT8 GEN_END
+    92.573  DUAL SERI PROMPT toks=25 cp0=1145622185 vbl=1462
+    92.573  DUAL SERI GEN_START
+   114.760  DUAL SERI GEN toks=16 cp0=768547819 vbl=981
+   114.760  DUAL SERI tps_vbl_x1000=977 tps_cp0_x1000=975
+   114.760  DUAL SERI RMS tern_x1000=6608 int8_x1000=7530
+   114.760  DUAL SERI RSP calls=384 cpu=0 free=0 blocked=384
+   114.760  DUAL SERI RSPT stage=3681253 disp=2176917 wait=43779767 epi=74670524
+   114.761  DUAL SERI TEXT Call me Sophia E
+   114.761  DUAL SERI GEN_END
+   147.725  DUAL VOTE PROMPT toks=25 cp0=1077127865 vbl=1374
+   147.725  DUAL VOTE GEN_START
+   169.224  DUAL VOTE GEN toks=16 cp0=724753859 vbl=925
+   169.224  DUAL VOTE tps_vbl_x1000=1036 tps_cp0_x1000=1034
+   169.224  DUAL VOTE RMS tern_x1000=6608 int8_x1000=7530
+   169.225  DUAL VOTE RSP calls=384 cpu=0 free=384 blocked=0
+   169.225  DUAL VOTE RSPT stage=3614632 disp=2176674 wait=70662 epi=73654565
+   169.225  DUAL VOTE TEXT Call me Sophia E
+   169.225  DUAL VOTE GEN_END
+   169.225  DUAL_DONE
