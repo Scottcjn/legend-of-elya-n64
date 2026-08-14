@@ -138,6 +138,51 @@ def main():
         h = int((pick == NX).sum())
         nc[r] = (h, n)
         print("  %-8s %6d/%-6d  %6.2f%%" % (r, h, n, 100.0 * h / n), flush=True)
+    # Significance of the vote against the better member, paired.
+    #
+    # The two arms see the SAME 1716 characters, so an unpaired proportions
+    # test throws away the pairing and is the wrong test.  McNemar's exact
+    # test conditions on the positions where exactly one of them is right,
+    # which is the only place the difference can come from.
+    def mcnemar(pick_a, pick_b):
+        ra, rb = (pick_a == NX), (pick_b == NX)
+        b = int((ra & ~rb).sum())   # a right, b wrong
+        c = int((rb & ~ra).sum())   # b right, a wrong
+        nn = b + c
+        if nn == 0:
+            return b, c, 1.0
+        # exact two-sided binomial against p = 0.5
+        k = min(b, c)
+        from math import comb
+        tail = sum(comb(nn, i) for i in range(k + 1)) / float(2 ** nn)
+        return b, c, min(1.0, 2.0 * tail)
+
+    print("\n-- paired significance, McNemar exact, vs each member --", flush=True)
+    picks = {}
+    picks["single"] = LT[:, 32:127].argmax(1) + 32
+    picks["single1"] = LI[:, 32:127].argmax(1) + 32
+    for r in rules:
+        if r in ("single", "single1"):
+            continue
+        if r == "raw":
+            picks[r] = (LT + LI)[:, 32:127].argmax(1) + 32
+        elif r.startswith("shift"):
+            picks[r] = (LT + LI / float(1 << int(r[5:])))[:, 32:127].argmax(1) + 32
+        elif r == "norm":
+            picks[r] = (LT / sc[0] + LI / sc[1])[:, 32:127].argmax(1) + 32
+        elif r == "agree":
+            pa = picks["single"]; pb = picks["single1"]
+            picks[r] = np.where(pa == pb, pa, (LT + LI)[:, 32:127].argmax(1) + 32)
+    sig = {}
+    for r in rules:
+        if r in ("single", "single1"):
+            continue
+        bt, ct, pt_ = mcnemar(picks["single"], picks[r])
+        bi, ci, pi_ = mcnemar(picks["single1"], picks[r])
+        sig[r] = {"vs_tern": [bt, ct, pt_], "vs_int8": [bi, ci, pi_]}
+        print("  %-8s vs ternary: +%d/-%d p=%.4g   vs int8: +%d/-%d p=%.4g"
+              % (r, ct, bt, pt_, ci, bi, pi_), flush=True)
+
     # How often the two members disagree at all -- the vote's whole budget.
     pt = LT[:, 32:127].argmax(1) + 32
     pi = LI[:, 32:127].argmax(1) + 32
@@ -168,7 +213,7 @@ def main():
 
     if a.json:
         json.dump({"logit_rms": sc, "ratio": ratio, "rom": romtxt,
-                   "nextchar": nc, "keys": keyres,
+                   "nextchar": nc, "mcnemar": sig, "keys": keyres,
                    "held_lines": len(held), "split": stats},
                   open(a.json, "w"), indent=2)
 
