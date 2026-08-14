@@ -222,9 +222,70 @@ on the same 1716-character holdout:
 That is an accuracy finding, and it does not settle the design, because the
 pairings are not equally affordable. F-DU006 measures the cost side.
 
-## F-DU006 — the same-format pair on the same two processors
+## F-DU006 — once the RSP is overlapped, the format stops mattering
 
-*(pending — the ternary+ternary ROM is built and queued)*
+Same ternary 8-layer model on the MIPS core, same **four** layers on the RSP,
+same seed, same shift, same sampler — only the RSP arm's weight format differs
+(`dual_logs/dual_run_tern8_tern4.log` against `dual_logs/dual_run_verify_shift0.log`).
+
+| | int8-4 on RSP | ternary-4 on RSP | delta |
+|---|---:|---:|---:|
+| B arm alone | 206 vbl | 228 vbl | **+10.7 %** |
+| SERI, no overlap | 981 vbl | 1003 vbl | +2.2 % |
+| **VOTE, overlapped** | **925 vbl** | **926 vbl** | **+0.11 %** |
+| tok/s (vote) | 1.036 | 1.035 | |
+| `rsp_t_wait`, SERI | 43,838,878 | 60,393,154 | |
+| `rsp_t_wait`, VOTE | 95,251 | 95,097 | |
+| epilogue CP0 | 73,663,603 | 73,663,603 | identical |
+| staging CP0 | 3,423,380 | 3,411,019 | identical |
+| blob | 3,407,884 B | 1,048,588 B | **3.25x smaller** |
+| bss | 5,555,696 B | 3,196,400 B | **2,359,296 B less RDRAM** |
+| held-out accuracy (sum) | 59.32 % | 59.27 % | the same |
+
+int8 **is** cheaper on the vector unit — +10.7 % standalone, reproducing the
++11.9 % in `docs/N64_RSP_FINDINGS.md` at a different depth on a different
+blob. **The premise is correct.**
+
+It is also, once overlapped, worth **one vblank in 926.** The entire int8
+advantage lives in RSP-busy time, and RSP-busy time is exactly what the CPU
+stops waiting for. The 16.5 M CP0 the ternary arm spends extra on the vector
+unit is spent while the MIPS core is doing the ternary model's own matmul, so
+it costs nothing. What survives the overlap — the float epilogue, the
+staging, the model's own attention and norms — is byte-for-byte identical
+between the two formats.
+
+**So the design conclusion inverts.** The two processors do prefer opposite
+formats; it does not matter, because the preference is expressed entirely in
+the part that gets hidden. What is left is memory, and there ternary wins by
+2.36 MB on an 8 MB machine — enough to run the RSP arm at 8 layers instead of
+4, or to leave the Expansion Pak's second half for something else.
+
+Overlap, third independent configuration, still complete: 60,393,154 CP0 =
+77.2 vblanks available, 1003 − 926 = 77 taken.
+
+### F-DU006a — the same-format pair at full depth
+
+`DUALFS=filesystem_dual_tt`, ternary on both processors, 8 layers each,
+seeds 1337 and 7:
+
+| arm | mixed (tern8 CPU + int8-4 RSP) | same format (tern8 CPU + tern8 RSP) |
+|---|---:|---:|
+| TERN | 774 vbl / 1.239 tok/s | 774 vbl / 1.239 tok/s |
+| B arm | 206 vbl / 4.655 | 435 vbl / 2.204 |
+| SERI | 981 vbl / 0.977 | 1211 vbl / 0.791 |
+| VOTE | 925 vbl / **1.036** | 1057 vbl / **0.907** |
+| `rsp_t_wait` | 43,838,878 → 95,251 | 120,794,547 → 189,911 |
+| bss | 5,555,696 B | 4,179,440 B |
+| held-out accuracy (sum) | 59.32 % | 60.49 % |
+
+154.5 vblanks of RSP time available to hide, 154 taken. The mechanism does
+not care which format the RSP is running.
+
+**Harness cross-check.** The B arm here is the shipped configuration — the
+ternary model, on the RSP, through the rspq overlay — and it measures
+2.204 tok/s against the scalar arm's 1.239, i.e. **1.78x**. That is exactly
+the honest baseline in `docs/N64_RATE_FINDINGS.md` (1.22 → 2.16, 1.78x),
+reproduced by a completely separate probe. The instrument is sound.
 
 ## F-DU007 — ROM against host, character by character: CPU exact, RSP 98.84 %
 
@@ -250,6 +311,42 @@ It cost the vote nothing here — at all three positions the ternary member
 decided the sum — and that is what makes F-DU004's host accuracy number
 transferable to the console without generating 1716 tokens on a 1.04 tok/s
 machine: **the arithmetic is the host's arithmetic.**
+
+---
+
+## Summary — the four questions
+
+**Does the vote run, and is it output-correct?** Yes. Three configurations of
+the dual ROM boot under ares and generate. Against the numpy oracle on 258
+teacher-forced held-out predictions the CPU arm is **258/258 exact** and the
+**vote is 258/258 exact** in two of three configurations and 257/258 in the
+third; the RSP arm is 255–257/258, because its driver quantizes activations
+and the CPU's does not (F-DU007).
+
+**tok/s, vblank-measured, 16 tokens.**
+
+| arm | vbl | tok/s |
+|---|---:|---:|
+| ternary 8L, MIPS core, alone | 773–774 | **1.240** |
+| int8 4L, RSP, alone | 206 | **4.655** |
+| ternary 8L, RSP, alone | 435 | **2.204** (= 1.78x scalar, the published baseline) |
+| the vote, serial | 981 | **0.977** |
+| **the vote, overlapped** | **925** | **1.036** |
+
+**How much overlap?** All of it, three times over. `rsp_t_wait` 43.84 M →
+0.095 M CP0 (99.8 % of the blocking gone); 56.06 vblanks of RSP time
+available and 56 taken; 77.2 available and 77 taken; 154.5 available and 154
+taken. In the brief's terms the vote costs **1.197x** the ternary model
+against a serial **1.269x** — and **1.00x is not reachable**, because only
+the matmul inner loop is the vector unit's and that is 27 % of the second
+arm. The other 73 % is the driver's float epilogue (61.8 % of the arm) and
+the model's own attention, norms and projections.
+
+**Does the +7.1 reproduce?** No. The vote beats both members by **+1.6
+points** on held-out next-character prediction, p = 0.00091 (McNemar exact,
+n = 1716), consistently across four seeds. And the diversity is not the
+format: pairing two *ternary* models scores as well (F-DU005), and at equal
+depth the format is worth one vblank in 926 (F-DU006).
 
 ---
 
