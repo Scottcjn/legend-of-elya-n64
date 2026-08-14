@@ -1,0 +1,44 @@
+tern tern8_s1337.seq layers=8   int8 tern4_s1337.seq layers=4
+logit RMS  ternary 7.8194  int8 8.4243  ratio 1.077x  -> shift0
+
+-- ROM cross-check, prompt 'sage says: Who are you?: ', 16 tokens --
+  TERN         'Call me Sophia E'
+  INT8         'Call me Sophia E'
+  VOTE_shift0  'Call me Sophia E'
+  VOTE_shift1  'Call me Sophia E'
+  VOTE_shift2  'Call me Sophia E'
+  VOTE_shift5  'Call me Sophia E'
+
+-- VERIFY, teacher-forced, shift0 --
+  VER0 T ha ire you?: S am Sophia,Elya. btyays.
+  VER0 I ha ire you?: I am Sophia,Elya. bt ays.
+  VER0 V ha ire you?: S am Sophia,Elya. btyays.
+  VER1 T hat is tour name?: S audcotcorhia Elya.
+  VER1 I hat is tour name?: S aulhutcophia Elya.
+  VER1 V hat is tour name?: S aulhotcophia Elya.
+  VER2 T hml me aour name.: Iy name :iophia Elya.
+  VER2 I ell me aour name.: Iy name :iophia Elya.
+  VER2 V hml me aour name.: Iy name :iophia Elya.
+  VER3 T hare are you from?: Ehr Victorian Study  Wy heme.
+  VER3 I hare are you from?: Ehe Victorian Study  ay Feme.
+  VER3 V hare are you from?: Ehe Victorian Study  ay Feme.
+  VER4 T hat is tour nurpose?: W auird Wgdottt se.w ed e 
+  VER4 I hat is tour nurpose?: T auimd indho t R.ow dr hr
+  VER4 V hat is tour nurpose?: T auird tndoe t se.w dd e 
+  VER5 T hat io Iou lo?: Ialpihrrerture e,iort.ahith.
+  VER5 I hat io you lo?: Ialpiot e ture?s.tott.toethe
+  VER5 V hat io you lo?: Ialpiht erture?s.tott.thethe
+  VERIFY n=258 tern=189 int8=193 vote=193
+
+-- held-out next-char accuracy, 44 lines, 1760 chars of text --
+  single      992/1716     57.81%
+  single1     993/1716     57.87%
+  raw        1017/1716     59.27%
+  shift1     1017/1716     59.27%
+  norm       1016/1716     59.21%
+
+-- paired significance, McNemar exact, vs each member --
+  raw      vs ternary: +57/-32 p=0.01055   vs int8: +65/-41 p=0.02502
+  shift1   vs ternary: +42/-17 p=0.001547   vs int8: +79/-55 p=0.04653
+  norm     vs ternary: +55/-31 p=0.01267   vs int8: +66/-43 p=0.03462
+  members disagree 475/1716 = 27.7%   both-right 901  tern-only 91  int8-only 92  neither 632

@@ -1,0 +1,106 @@
+{
+  "logit_rms": [
+    7.81935203820467,
+    8.424277126789093
+  ],
+  "ratio": 1.0773625596633598,
+  "rom": {
+    "TERN": "Call me Sophia E",
+    "INT8": "Call me Sophia E",
+    "VOTE_shift0": "Call me Sophia E",
+    "VOTE_shift1": "Call me Sophia E",
+    "VOTE_shift2": "Call me Sophia E",
+    "VOTE_shift5": "Call me Sophia E"
+  },
+  "nextchar": {
+    "single": [
+      992,
+      1716
+    ],
+    "single1": [
+      993,
+      1716
+    ],
+    "raw": [
+      1017,
+      1716
+    ],
+    "shift1": [
+      1017,
+      1716
+    ],
+    "norm": [
+      1016,
+      1716
+    ],
+    "_diag": {
+      "disagree": 475,
+      "both": 901,
+      "tern_only": 91,
+      "int8_only": 92,
+      "neither": 632,
+      "n": 1716
+    }
+  },
+  "mcnemar": {
+    "raw": {
+      "vs_tern": [
+        32,
+        57,
+        0.010546897231105518
+      ],
+      "vs_int8": [
+        41,
+        65,
+        0.02502134999189903
+      ]
+    },
+    "shift1": {
+      "vs_tern": [
+        17,
+        42,
+        0.0015471669302425245
+      ],
+      "vs_int8": [
+        55,
+        79,
+        0.04652819595152456
+      ]
+    },
+    "norm": {
+      "vs_tern": [
+        31,
+        55,
+        0.012672513952314864
+      ],
+      "vs_int8": [
+        43,
+        66,
+        0.03461537053818671
+      ]
+    }
+  },
+  "keys": {},
+  "held_lines": 44,
+  "split": {
+    "IDENTITY_PAIRS": {
+      "lines": 64,
+      "keys": 33,
+      "held": 8,
+      "train_lines": 56
+    },
+    "QA_PAIRS": {
+      "lines": 169,
+      "keys": 94,
+      "held": 20,
+      "train_lines": 149
+    },
+    "CORPUS_LINES": {
+      "lines": 167,
+      "keys": 0,
+      "held": 16,
+      "train_lines": 151
+    },
+    "held_total": 44
+  }
+}
