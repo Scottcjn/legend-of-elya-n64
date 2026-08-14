@@ -7,6 +7,11 @@
 > [`docs/N64_RATE_FINDINGS.md`](docs/N64_RATE_FINDINGS.md), with raw logs in
 > `docs/rate_logs/`.
 
+> **The dual-processor consensus** — two models, ternary on the MIPS core and
+> int8 on the RSP, voting per token — is a separate journal:
+> [`docs/N64_DUAL_FINDINGS.md`](docs/N64_DUAL_FINDINGS.md), raw logs in
+> `docs/dual_logs/`. It builds directly on the split-dispatch driver below.
+
 Journal for the rspq-overlay conversion. Append-only; every entry is a
 discrete measured result, committed as it is written.
 
