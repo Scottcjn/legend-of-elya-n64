@@ -1265,6 +1265,11 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
  * ----------------------------------------------------------------------- */
 float sgai_dual_logits[SGAI_VOCAB];
 
+/* 1 = run the two members strictly one after the other (the no-overlap
+ * control), 0 = dispatch the RSP and let the CPU proceed underneath it.
+ * Runtime, not a #ifdef, so both arms are measured in one build of one ROM. */
+int sgai_dual_serial = 0;
+
 /* One matmul slot of a fused layer: dispatch b, do a, collect b.
  * Either side may be absent (b runs out of layers before a does). */
 static void dual_mm(SGAIState *a, const SGAILayerPtrs *LA,
@@ -1273,6 +1278,21 @@ static void dual_mm(SGAIState *a, const SGAILayerPtrs *LA,
                     const float *bin, float *bout, int in_dim, int out_dim)
 {
 #ifdef USE_RSP_MATMUL
+    if (sgai_dual_serial) {
+        /* The no-overlap CONTROL.  Identical arithmetic, identical dispatch,
+         * but b's matmul is waited on before a's is started -- rsp_matmul_pk()
+         * is begin immediately followed by end.  Having it in the same build
+         * as the overlapped path means the overlap can be reported as the
+         * difference between two MEASUREMENTS of the same machine, instead of
+         * the difference between a measurement and the sum of two others. */
+        if (LB != NULL)
+            matmul_e(LB->w[t], LB->s[t], bin, bout, in_dim, out_dim,
+                     b->w_bits, b->engine);
+        if (LA != NULL)
+            matmul_e(LA->w[t], LA->s[t], ain, aout, in_dim, out_dim,
+                     a->w_bits, a->engine);
+        return;
+    }
     int dispatched = 0;
     if (LB != NULL)
         dispatched = rsp_matmul_begin(LB->w[t], bin, in_dim, out_dim, b->w_bits);

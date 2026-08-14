@@ -133,7 +133,8 @@ static void snap_diff(const struct rspsnap *a, const struct rspsnap *b,
 }
 #endif
 
-/* mode: 0 = ternary alone, 1 = int8 alone, 2 = the vote */
+/* mode: 0 = ternary alone, 1 = int8 alone, 2 = the vote (overlapped),
+ *       3 = the vote with the RSP NOT overlapped (the control) */
 static void run_arm(const char *name, int mode)
 {
     const char *p0 = DUAL_PROMPT;
@@ -148,9 +149,8 @@ static void run_arm(const char *name, int mode)
 
     sgai_reset(&ST_T);
     sgai_reset(&ST_I);
-
 #ifdef USE_RSP_MATMUL
-    snap(&s0);
+    sgai_dual_serial = (mode == 3) ? 1 : 0;
 #endif
 
     /* Prompt ingestion, timed separately and never folded into tok/s: it is
@@ -170,16 +170,28 @@ static void run_arm(const char *name, int mode)
             (unsigned long long)cp0_prompt, (unsigned)(vp1 - vp0));
     ISV(pl);
 
+    /* The RSP counters are snapshotted HERE, after prompt ingestion, so the
+     * phase breakdown covers exactly the DUAL_NGEN generated tokens the tok/s
+     * figure covers.  Taking it before the prompt folded 25 extra forward
+     * passes into every phase (the first run did; F-DU002's phase table is
+     * over 41 passes, not 16). */
+#ifdef USE_RSP_MATMUL
+    snap(&s0);
+#endif
     sprintf(pl, "DUAL %s GEN_START\n", name); ISV(pl);
     vb0 = g_vbl;
     for (int i = 0; i < DUAL_NGEN; i++) {
+        /* Store the prediction carried IN, then step -- which is exactly what
+         * the host reference does, so the two transcripts are directly
+         * comparable instead of off by one (F-DU002 had to correct for it by
+         * hand). */
+        outbuf[i] = (char)tok;
         CP0(t0);
         if (mode == 0)      tok = sgai_next_token(&ST_T, tok, 0);
         else if (mode == 1) tok = sgai_next_token(&ST_I, tok, 0);
         else                tok = sgai_dual_next_token(&ST_T, &ST_I, DUAL_SHIFT, tok, 0);
         CP0(t1);
         cp0_gen += (uint32_t)(t1 - t0);
-        outbuf[i] = (char)tok;
     }
     vb1 = g_vbl;
     outbuf[DUAL_NGEN] = 0;
@@ -264,7 +276,8 @@ int main(void)
 
     run_arm("TERN", 0);
     run_arm("INT8", 1);
-    run_arm("VOTE", 2);
+    run_arm("SERI", 3);   /* the vote with the RSP NOT overlapped */
+    run_arm("VOTE", 2);   /* the vote with it overlapped          */
 
     ISV("DUAL_DONE\n");
     while (1) { }

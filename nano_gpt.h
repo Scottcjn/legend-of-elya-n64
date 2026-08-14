@@ -235,6 +235,8 @@ uint8_t sgai_dual_next_token(SGAIState *a, SGAIState *b, int shift,
 /* The combined logits from the last sgai_dual_next_token(), for the
  * host-against-ROM check. */
 extern float sgai_dual_logits[SGAI_VOCAB];
+/* 1 = the no-overlap control: b's matmul is waited on before a's starts. */
+extern int sgai_dual_serial;
 void sgai_reset(SGAIState *state);
 uint8_t sgai_next_token(SGAIState *state, uint8_t input_token, uint32_t temperature_q8);
 void sgai_generate(SGAIState *state, const uint8_t *prompt, int prompt_len,
