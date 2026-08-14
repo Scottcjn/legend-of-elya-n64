@@ -3,3 +3,6 @@ nearest power of two: shift0
 single   125/127   98.4%
 single1  125/127   98.4%
 raw      125/127   98.4%
+shift5   125/127   98.4%
+norm     125/127   98.4%
+agree    125/127   98.4%

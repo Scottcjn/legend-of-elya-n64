@@ -159,6 +159,58 @@ def logit_scales(models, keys, n_new=8):
     return [float(np.mean(a)) for a in acc]
 
 
+
+# ------------------------------------------------- held-out next-char eval
+def held_lines():
+    """The paraphrase holdout: answers the model was never trained on.
+
+    train_mix.split_v7() moves the LAST answer of every key with >= 3 answers
+    into validation, plus every 10th corpus line.  Those strings are the only
+    text in this project a trained model has genuinely not seen, so they are
+    the only place a vote has anything to win."""
+    import train_mix as TM
+    _train, held, stats = TM.split_v7()
+    return held, stats
+
+
+def nextchar(models, lines, rule="shift0", scales=None, lo=32, hi=126,
+             ctx_cap=None):
+    """Teacher-forced next-character accuracy on held-out text.
+
+    Every model is fed the TRUE previous character, so the members stay in
+    lockstep and each position is an independent trial of exactly the thing
+    the vote changes: which token the combined logits put on top.  Free
+    running would let one bad character send the members down different
+    strings and would measure divergence, not agreement.
+
+    n is the character count, which is thousands -- against the 127 whole-key
+    trials of score(), where both members already sit at 98.4% and there is no
+    headroom for a vote to show anything at all (F-DU003)."""
+    runners = [Runner(m) for m in models]
+    ctx = min(m.ctx for m in models) if ctx_cap is None else ctx_cap
+    hit = 0
+    n = 0
+    per_member = [0] * len(models)
+    for line in lines:
+        rs = [Runner(m) for m in models]
+        b = line.encode("ascii", "replace")
+        for i in range(len(b) - 1):
+            if i >= ctx - 1:
+                break
+            lg = [r.step(b[i]) for r in rs]
+            nxt = b[i + 1]
+            if not (lo <= nxt <= hi):
+                continue
+            n += 1
+            if combine(lg, rule, scales, lo, hi) == nxt:
+                hit += 1
+            for mi, l in enumerate(lg):
+                if int(np.argmax(l[lo:hi + 1])) + lo == nxt:
+                    per_member[mi] += 1
+    del runners
+    return hit, n, per_member
+
+
 # ---------------------------------------------------------------- scoring
 def key_sets():
     L = E12.v7_lists()
