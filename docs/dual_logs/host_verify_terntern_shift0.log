@@ -31,3 +31,10 @@ logit RMS  ternary 7.8194  int8 8.0580  ratio 1.031x  -> shift0
   VERIFY n=258 tern=189 int8=197 vote=198
 
 -- held-out next-char accuracy, 44 lines, 1760 chars of text --
+  single      992/1716     57.81%
+  single1    1003/1716     58.45%
+  raw        1038/1716     60.49%
+
+-- paired significance, McNemar exact, vs each member --
+  raw      vs ternary: +73/-27 p=4.692e-06   vs int8: +71/-36 p=0.0009232
+  members disagree 449/1716 = 26.2%   both-right 907  tern-only 85  int8-only 96  neither 628

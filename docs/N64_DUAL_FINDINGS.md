@@ -226,6 +226,31 @@ pairings are not equally affordable. F-DU006 measures the cost side.
 
 *(pending — the ternary+ternary ROM is built and queued)*
 
+## F-DU007 — ROM against host, character by character: CPU exact, RSP 98.84 %
+
+The VERIFY arm runs 6 held-out lines teacher-forced, 258 predictions, and
+prints each arm's pick string; `training/dual_eval.py --verify-shift 0`
+prints the host's. Compared position by position:
+
+| arm | exact vs host | ROM hits | host hits |
+|---|---:|---:|---:|
+| TERN — ternary on the CPU | **258/258** | 189 | 189 |
+| INT8 — int8 on the RSP | 255/258 | 193 | 191 |
+| VOTE — the sum, shift 0 | **258/258** | 197 | 197 |
+
+The CPU arm and the vote are byte-identical to the numpy oracle. The RSP arm
+is not, and should not be expected to be: the driver **quantizes the
+activation vector** before handing it to the vector unit, so the RSP path
+computes an int16 approximation of a float32 dot product, while the CPU
+kernels multiply float activations by dequantized weights and carry no such
+error. 3 of 258 positions flip, all three in one line, all three where two
+logits were near-tied.
+
+It cost the vote nothing here — at all three positions the ternary member
+decided the sum — and that is what makes F-DU004's host accuracy number
+transferable to the console without generating 1716 tokens on a 1.04 tok/s
+machine: **the arithmetic is the host's arithmetic.**
+
 ---
 
 ## What has not been done
