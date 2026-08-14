@@ -1,0 +1,63 @@
+     1.461  Loaded dual_v0
+     1.771  Vulkan Enabled: using paraLLEl-RDP
+     2.238  DUAL INIT mem=8388608 tern_sz=2031628 cap=2031632 int8_sz=3407884 cap=3407888 ok=11
+     2.645  DUAL MODELS tern rdy=1 bits=2 nl=8 | int8 rdy=1 bits=8 nl=4
+     2.645  DUAL KV tern=0x805e0ac8 int8=0x80670ad8 shift=0 ngen=16 ctx=128
+     2.645  DUAL VERIFY_START
+    54.364  DUAL VER0 T ha ire you?: S am Sophia,Elya. btyays.
+    54.364  DUAL VER0 I ha ire you?: S am Sophia,Elya. bt ars.
+    54.364  DUAL VER0 V ha ire you?: S am Sophia,Elya. btways.
+   107.076  DUAL VER1 T hat is tour name?: S audcotcorhia Elya.
+   107.076  DUAL VER1 I hat is tour name?: S aupao aophia Elya.
+   107.076  DUAL VER1 V hat is tour name?: S aupao cophia Elya.
+   161.257  DUAL VER2 T hml me aour name.: Iy name :iophia Elya.
+   161.257  DUAL VER2 I hml me aour name.: Iy pame : ophia Elya.
+   161.257  DUAL VER2 V hml me aour name.: Iy name :iophia Elya.
+   227.747  DUAL VER3 T hare are you from?: Ehr Victorian Study  Wy heme.
+   227.747  DUAL VER3 I hare are you from?: Ehe Victorian Study  ay heme.
+   227.747  DUAL VER3 V hare are you from?: Ehe Victorian Study  ay heme.
+   292.204  DUAL VER4 T hat is tour nurpose?: W auird Wgdottt se.w ed e 
+   292.204  DUAL VER4 I hat is tour nurpose?: H auirdsWndeerg seuw e  er
+   292.204  DUAL VER4 V hat is tour nurpose?: H auird Wndhe t se.w ed e 
+   350.911  DUAL VER5 T hat io Iou lo?: Ialpihrrerture e,iort.ahith.
+   350.911  DUAL VER5 I hat io you lo?: Ialpitreenture,e rone.shuthe
+   350.912  DUAL VER5 V hat io Iou lo?: Ialpihrrenture e totd.ahithe
+   350.912  DUAL VERIFY n=258 tern=189 int8=193 vote=197 shift=0 vbl=14565
+   350.912  DUAL VERIFY_END
+   377.428  DUAL TERN PROMPT toks=25 cp0=909784681 vbl=1161
+   377.428  DUAL TERN GEN_START
+   394.685  DUAL TERN GEN toks=16 cp0=606005642 vbl=774
+   394.686  DUAL TERN tps_vbl_x1000=1239 tps_cp0_x1000=1237
+   394.686  DUAL TERN RMS tern_x1000=6608 int8_x1000=0
+   394.686  DUAL TERN RSP calls=0 cpu=0 free=0 blocked=0
+   394.686  DUAL TERN RSPT stage=0 disp=0 wait=0 epi=0
+   394.686  DUAL TERN TEXT Call me Sophia E
+   394.686  DUAL TERN GEN_END
+   402.257  DUAL INT8 PROMPT toks=25 cp0=234240066 vbl=299
+   402.257  DUAL INT8 GEN_START
+   407.236  DUAL INT8 GEN toks=16 cp0=161570553 vbl=206
+   407.236  DUAL INT8 tps_vbl_x1000=4655 tps_cp0_x1000=4641
+   407.236  DUAL INT8 RMS tern_x1000=0 int8_x1000=7973
+   407.236  DUAL INT8 RSP calls=384 cpu=0 free=0 blocked=384
+   407.236  DUAL INT8 RSPT stage=3268405 disp=2163940 wait=43816276 epi=74350596
+   407.236  DUAL INT8 TEXT Calobe corad for
+   407.236  DUAL INT8 GEN_END
+   441.283  DUAL SERI PROMPT toks=25 cp0=1146040460 vbl=1463
+   441.283  DUAL SERI GEN_START
+   463.617  DUAL SERI GEN toks=16 cp0=768796027 vbl=981
+   463.617  DUAL SERI tps_vbl_x1000=977 tps_cp0_x1000=975
+   463.617  DUAL SERI RMS tern_x1000=6608 int8_x1000=7530
+   463.617  DUAL SERI RSP calls=384 cpu=0 free=0 blocked=384
+   463.617  DUAL SERI RSPT stage=3422352 disp=2165435 wait=43838878 epi=74834731
+   463.617  DUAL SERI TEXT Call me Sophia E
+   463.618  DUAL SERI GEN_END
+   496.687  DUAL VOTE PROMPT toks=25 cp0=1077721004 vbl=1376
+   496.687  DUAL VOTE GEN_START
+   518.191  DUAL VOTE GEN toks=16 cp0=725142040 vbl=925
+   518.191  DUAL VOTE tps_vbl_x1000=1036 tps_cp0_x1000=1034
+   518.192  DUAL VOTE RMS tern_x1000=6608 int8_x1000=7530
+   518.192  DUAL VOTE RSP calls=384 cpu=0 free=384 blocked=0
+   518.192  DUAL VOTE RSPT stage=3423380 disp=2162379 wait=95251 epi=73660452
+   518.192  DUAL VOTE TEXT Call me Sophia E
+   518.192  DUAL VOTE GEN_END
+   518.192  DUAL_DONE
