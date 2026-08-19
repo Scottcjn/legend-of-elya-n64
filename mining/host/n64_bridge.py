@@ -196,14 +196,15 @@ class N64Bridge:
             passed = data[1]
             check_data = data[2:]
 
+            # IDs must match the ROM writer (mining/n64/n64_attest.h):
+            # CHECK_CPU_PRID=1, CHECK_COUNT_TIMING=2, CHECK_VI_SCAN=3,
+            # CHECK_MEMORY_RATIO=4, CHECK_ANTI_EMU=5 (NUM_ATTEST_CHECKS=5).
             check_names = {
                 1: "cpu_prid",
                 2: "count_timing",
                 3: "vi_scan",
                 4: "memory_ratio",
-                5: "pi_timing",
-                6: "rdram_config",
-                7: "anti_emulation",
+                5: "anti_emulation",
             }
 
             name = check_names.get(check_id, f"check_{check_id}")
