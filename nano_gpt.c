@@ -27,6 +27,17 @@
 #include "rsp_matmul.h"
 #endif
 
+/* C028/C029: the trained end-of-answer is a NEWLINE.  train_sophia_v7.py builds
+ * the corpus as "\n".join(all_lines), so the model was taught to predict byte 10
+ * after every answer -- and the greedy band (ASCII 32..126) threw that vote away
+ * on every single token, which is why answers ran on and had to be cut by a
+ * period heuristic downstream.  The Genesis port has always stopped on newline
+ * (legend-of-elya-genesis/host/harness.c:43); the N64 now does too, BY DEFAULT.
+ * Build with -DSGAI_NO_NEWLINE_STOP for the historical run-on behaviour. */
+#if !defined(SGAI_NO_NEWLINE_STOP) && !defined(SGAI_NEWLINE_STOP)
+#define SGAI_NEWLINE_STOP 1
+#endif
+
 /* Byte-swap helpers for LE weight file on BE N64 */
 static inline uint16_t swap16(uint16_t x) { return (x >> 8) | (x << 8); }
 static inline uint32_t swap32(uint32_t x) {

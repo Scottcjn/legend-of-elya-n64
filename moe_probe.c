@@ -57,8 +57,14 @@ typedef struct { uint32_t magic; uint16_t ver, n; uint32_t len, base; } MoeHdr;
 #ifndef MOE_SLOTS
 #define MOE_SLOTS 2
 #endif
+/* Generation stops at the model's own end-of-answer, not at a fixed count.
+ * The corpus is newline-joined, so byte 10 is a TRAINED end-of-answer (C028);
+ * the greedy band 32..126 simply never let it win, which is why answers came
+ * out truncated mid-word. -DSGAI_NEWLINE_STOP lets it compete, exactly as the
+ * Genesis port already did (legend-of-elya-genesis/host/harness.c:43,
+ * "if (tok == '\n') break;"). MOE_NGEN is now a CAP, not a target. */
 #ifndef MOE_NGEN
-#define MOE_NGEN 24
+#define MOE_NGEN 48
 #endif
 #ifndef MOE_EXPERT_BYTES
 #define MOE_EXPERT_BYTES 1048592        /* 1,048,588 rounded to 8 */
@@ -151,13 +157,16 @@ int main(void)
         for (int k = 0; p[k]; k++) tok = sgai_next_token(&ST, (uint8_t)p[k], 0);
         static char out[MOE_NGEN + 1];
         vb0 = g_vbl;
-        for (int k = 0; k < MOE_NGEN; k++) {
-            out[k] = (char)tok;
+        int n = 0;
+        for (; n < MOE_NGEN; n++) {
+            if (tok == '\n') break;          /* the trained end of answer */
+            out[n] = (char)tok;
             tok = sgai_next_token(&ST, tok, 0);
         }
         vb1 = g_vbl;
-        out[MOE_NGEN] = 0;
-        for (int k = 0; k < MOE_NGEN; k++)
+        int hit_eos = (tok == '\n');
+        out[n] = 0;
+        for (int k = 0; k < n; k++)
             if (out[k] < 32 || out[k] > 126) out[k] = '?';
         CP0(t3);
 
@@ -170,6 +179,9 @@ int main(void)
                 (unsigned)EC.prefetch_hits);
         ISV(pl);
         sprintf(pl, "MOE[%d] TEXT %s\n", i, out); ISV(pl);
+        sprintf(pl, "MOE[%d] %d tokens, %s\n", i, n,
+                hit_eos ? "ended on its own (newline)" : "HIT THE CAP (truncated)");
+        ISV(pl);
     }
     ISV("MOE_DONE\n");
     while (1) { }

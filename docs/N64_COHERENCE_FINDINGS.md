@@ -664,3 +664,55 @@ decimals by luck. The newline is what the model was actually trained to emit.
 Not yet done: retire the period rule in favour of `'\n'` in the game loop, and
 re-measure C027's free-run number with the flag on (the host greedy run already
 shows 32/32 self-terminating, median 27 chars).
+
+## C030: newline-stop is now the DEFAULT, and what that does and does not buy
+C028 found that the trained end-of-answer is a newline and that the greedy band
+(ASCII 32..126) discarded it on every token; C029 wired it into the temperature
+path behind `-DSGAI_NEWLINE_STOP`. It is now **on by default**
+(`-DSGAI_NO_NEWLINE_STOP` restores the historical run-on behaviour). The Genesis
+port has always done this — `legend-of-elya-genesis/host/harness.c:43`,
+`if (tok == '\n') break;` — and the N64 simply never inherited it.
+
+**All 32 game prompts, greedy, host, no decode mask, reading raw bytes:**
+```
+self-terminated ......... 32/32
+0 invented words ........ 32/32   (0 invented / 152 words)
+trained-answer hits ..... 28/28   (identical to the C027 run-on baseline)
+answer length ........... min 20 / median 27 / max 35 characters
+```
+On console with the MoE bank, six for six ended on their own, none hit the cap:
+`I am Sophia Elya.` (17 tokens) · `A blockchain for vintage chips.` (31) ·
+`AltiVec SIMD on the G4 chip.` (28) · `Ghosts and goblins guard treasure.` (34) ·
+`Ganondorf craves Power.` (23) · `Epochs settle rewards each ten min.` (35).
+Before this, the same ROM printed `I am Sophia Elya.: Sophi` and
+`AltiVec SIMD on the G4 c` — truncated mid-word by a fixed token count.
+
+**Consequence for callers: byte 10 now reaches the sampler's output.** Anything
+that consumes tokens must handle it. `legend_of_elya.c`'s
+`update_generating_step()` already did (`if (tok == '\n') tok = 0;`).
+`xchk_probe.c`, which generates a fixed 48 tokens and does not stop, now shows
+it as `: Sophia Elya of Elyan Labs.?What ` — the `?` is its non-printable
+substitution, and CPU/RSP still agree (MATCH 16/16, 48/48, XCHK PASS).
+
+**The period heuristic can now be retired.** `update_generating_step()` cuts on
+the first `.` after 8 characters, and its own comment documents the bug: a `.`
+between digits is a decimal point, so a retrain whose answers contain decimals
+truncates `PowerPC G4 earns 2.5x RTC.` to `PowerPC G4 earns 2`. The newline is
+what the model was actually trained to emit. Not yet removed.
+
+**LONGER ANSWERS ARE NOT A DECODING PROBLEM — measured.** Generating past the
+first newline does not extend the answer; it reproduces the corpus's NEXT
+ENTRY, question included:
+```
+Who are you?:  -> "Sophia Elya of Elyan Labs."
+               -> "What is the G4?: AltiVec SIMD on the G4 chip."
+               -> "What is the G4?: AltiVec SIMD on the G4 chip."
+```
+That is correct behaviour for a byte-level model trained on a newline-joined
+Q&A corpus: after an answer comes the next pair. So multi-sentence NPC dialogue
+needs multi-sentence ANSWERS IN THE CORPUS (or a re-prompt per sentence), not a
+sampler change. The answers are short because the training answers are short.
+
+**Side effect worth having:** answers average ~28 tokens instead of always
+spending the cap, so a turn costs ~4.7 s rather than 8.1 s at 5.9 tok/s. The
+model stopping when it is finished is also the cheaper option.
