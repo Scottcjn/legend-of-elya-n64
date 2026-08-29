@@ -558,7 +558,7 @@ ROMs staged in `~/aresroms/`: coh_pse_on, g_on, g_fix, g_off, g_n03 (+ .log).
    no better on any metric.
 
 
-## F-C001: **the 32 game prompts, scored on 64GPT's own metric — greedy, raw model, no mask**
+## C027: **the 32 game prompts, scored on 64GPT's own metric — greedy, raw model, no mask**
 Context: kmoo/64gpt (a char-level GRU NPC on N64) reached "0 invented words" in
 its M12.1 only by a lexicon-trie decode guard that masks the sampler to corpus
 words; its unguarded probes still run 1.5-5 invented words per line (their
