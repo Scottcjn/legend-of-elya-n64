@@ -885,12 +885,29 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
         else
             probs[i] = -1e9f;
     }
+#ifdef SGAI_NEWLINE_STOP
+    /* C028: newline (byte 10) is the trained end-of-answer.  Let it compete
+     * in the temperature path too, by parking its logit in slot 31 (never a
+     * candidate otherwise) so the contiguous softmax/draw loops below cover it
+     * as one extra entry; a draw of slot 31 is returned as 10. */
+#define SAMP_LO 31
+    probs[31] = logits[10] * inv_temp;
+#else
+#define SAMP_LO 32
+#endif
+#ifdef SGAI_NEWLINE_STOP
+#define SAMP_MAP(i) (((i) == 31) ? 10 : (i))
+#else
+/* identity when disabled: no dead compare in the hot draw loop, so the
+ * default ROM stays byte-identical (verified by md5 of the .z64) */
+#define SAMP_MAP(i) (i)
+#endif
 
-    /* Softmax over printable range */
-    softmax_f(probs + 32, 95);
+    /* Softmax over printable range (+ the newline slot when enabled) */
+    softmax_f(probs + SAMP_LO, 127 - SAMP_LO);
 
     /* Zero non-printable */
-    for (int i = 0; i < 32; i++) probs[i] = 0.0f;
+    for (int i = 0; i < SAMP_LO; i++) probs[i] = 0.0f;
     for (int i = 127; i < SGAI_VOCAB; i++) probs[i] = 0.0f;
 
 #ifdef SAMP_TRACE
@@ -933,7 +950,7 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
 
     /* Multinomial sampling */
     float total = 0.0f;
-    for (int i = 32; i <= 126; i++) total += probs[i];
+    for (int i = SAMP_LO; i <= 126; i++) total += probs[i];
 
 #ifdef SAMP_TRACE
     int  samp_chosen = -1, samp_fallback = 0, samp_rank = -1;
@@ -959,6 +976,9 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
             int best = 32;
             for (int i = 33; i <= 126; i++)
                 if (logits[i] > logits[best]) best = i;
+#ifdef SGAI_NEWLINE_STOP
+            if (logits[10] > logits[best]) best = 10;
+#endif
 #ifdef SAMP_TRACE
             samp_chosen = best; samp_fallback = 1; goto samp_done;
 #else
@@ -987,12 +1007,12 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
 
     float r = (float)(rng & 0xFFFF) / 65536.0f * total;
     float csum = 0.0f;
-    for (int i = 32; i <= 126; i++) {
+    for (int i = SAMP_LO; i <= 126; i++) {
         csum += probs[i];
 #ifdef SAMP_TRACE
-        if (r < csum) { samp_chosen = i; samp_r = r; goto samp_done; }
+        if (r < csum) { samp_chosen = SAMP_MAP(i); samp_r = r; goto samp_done; }
 #else
-        if (r < csum) return (uint8_t)i;
+        if (r < csum) return (uint8_t)SAMP_MAP(i);
 #endif
     }
 #ifdef SAMP_TRACE

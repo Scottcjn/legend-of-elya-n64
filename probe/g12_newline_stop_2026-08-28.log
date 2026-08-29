@@ -1,0 +1,28 @@
+Loaded g12_nl
+Opening TCP-server on 127.0.0.1:9124
+Vulkan Enabled: using paraLLEl-RDP
+G12 rdy=1 bits=2 ctx=128 emx16=22
+G12 0|Who are you?: |Sophia Elya of Elyan Labs.
+What is the G4?: Alti
+G12T 0|Who are you?: |Sophia Elya, your guide.
+What is the G4?: AltiVe
+G12 1|What lurks here?: |Dark spirits haunt these halls.
+What is the G4?:
+G12T 1|What lurks here?: |Dark spirits haunt these halls.
+What is your nam
+G12 2|Tell me a secret.: |Gold hides beneath the tiles.
+What is the G4?: A
+G12T 2|Tell me a secret.: |Gold hides beneath the tiles.
+What is the G5?: P
+G12 3|What is RustChain?: |A blockchain for vintage chips.
+What is the G4?:
+G12T 3|What is RustChain?: |A blockchain for vintage chips.
+What is the Vict
+G12 4|What is your name?: |Sophia Elya is my name.
+What is the G4?: AltiVec
+G12T 4|What is your name?: |Sophia Elya is my name.
+What is the G4?: AltiVec
+G12 5|What is proof of antiquity?: |Old hardware earns more.
+What is the G4?: AltiVe
+G12T 5|What is proof of antiquity?: |Old hardware earns more.
+Who is Saria?: Friend o

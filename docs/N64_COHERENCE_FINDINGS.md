@@ -621,3 +621,46 @@ cap, so at 2.19 tok/s a reply completes in ~12 s instead of ~30 — the cheapest
 speedup in this repo; (3) this is the same lesson as the NES port (let the
 model finish its sentence). Greedy only; the temperature path still masks 10
 and is untouched. Not yet wired into the game loop or booted in ares.
+
+## C029: newline-stop in the temperature path, and what it is actually worth in the game
+C028 measured the greedy path on the host. This wires the same trained EOS into
+the sampler the game really uses (`temperature_q8 = 64`) and checks it on the
+console engine under ares.
+
+**Implementation.** `sample_logits()`'s temperature path builds a contiguous
+softmax over 32..126. Under `-DSGAI_NEWLINE_STOP` the newline logit is parked in
+slot 31 — never a candidate otherwise — so the existing softmax, total and
+cumulative-draw loops cover it as one extra entry (`SAMP_LO`), and a draw of
+slot 31 is returned as byte 10 (`SAMP_MAP`). The greedy path, the `total <= 0`
+argmax fallback, and the trace path are covered by the same flag.
+
+**Default build is unchanged, proven at the instruction level.** `SAMP_MAP` is
+the identity macro when the flag is off, so no dead compare enters the hot draw
+loop: `mips64-elf-objdump -d` of `build/nano_gpt_rsp_ovl.o` before and after the
+patch is **identical, all 2,740 instructions**. (The `.o`/`.z64` md5 does move —
+DWARF line numbers shifted — so md5 is not the right test here and the
+disassembly is.)
+
+**ares, `make base-rsp-ovl EXTRA="-DGAME12_PROBE -DG12_NGEN=48
+-DSGAI_NEWLINE_STOP"`**, log in `probe/g12_newline_stop_2026-08-28.log`, the
+real game path (`G12T`, temperature 64):
+```
+G12T 0|Who are you?: |Sophia Elya, your guide.
+G12T 1|What lurks here?: |Dark spirits haunt these halls.
+G12T 2|Tell me a secret.: |Gold hides beneath the tiles.
+G12T 3|What is RustChain?: |A blockchain for vintage chips.
+G12T 4|What is your name?: |Sophia Elya is my name.
+G12T 5|What is proof of antiquity?: |Old hardware earns more.
+```
+**The honest limit on this result.** `update_generating_step()` ALREADY stopped
+at the first `.` after 8 characters, so the game's answers were clean before
+this change too — this run is not a before/after improvement in the transcript.
+What the trained EOS buys is that the period heuristic can be retired, and that
+heuristic has a known bug documented in its own comment: a `.` between digits is
+a decimal point, so "PowerPC G4 earns 2.5x RTC." truncates to "PowerPC G4 earns
+2" for any retrain whose answers contain decimals. Today's twelve prompts avoid
+decimals by luck. The newline is what the model was actually trained to emit.
+
+Not yet done: retire the period rule in favour of `'\n'` in the game loop, and
+re-measure C027's free-run number with the flag on (the host greedy run already
+shows 32/32 self-terminating, median 27 chars).
