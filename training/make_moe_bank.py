@@ -21,7 +21,9 @@ measure the DMA hiding before any of this existed.
 Uniform stride is not cosmetic: `ec_init()` takes ONE `expert_len` and derives
 every offset from it.
 """
-import argparse, json, os, struct
+import argparse, json, os, struct, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import moe_shards
 
 HDR_MAGIC = b"SGMB"
 HDR_SIZE  = 32
@@ -37,11 +39,18 @@ def build(blobs, names, out_path):
     expert_len = max(len(r) for r in raw)
     expert_len = (expert_len + 7) & ~7          # PI DMA wants 8-byte alignment
     table = HDR_SIZE + n * NAME_LEN
-    base  = (table + expert_len - 1) // expert_len * expert_len
+    # 16-byte alignment, NOT expert_len alignment: PI DMA needs 8 (16 is free
+    # and keeps the slot buffers quadword-aligned).  Rounding the base up to a
+    # whole expert wasted a full megabyte of cartridge on padding.
+    base  = (table + 15) & ~15
 
     out = bytearray()
     out += HDR_MAGIC
-    out += struct.pack("<HHII", 1, n, expert_len, base)
+    # BIG-endian: the N64 is big-endian and this bank header is a NEW format,
+    # so it is written in the target's byte order and the ROM needs no swap.
+    # (The SEQ2 blobs INSIDE keep their own little-endian header, which
+    # nano_gpt.c already byte-swaps at load -- that format predates this one.)
+    out += struct.pack(">HHII", 1, n, expert_len, base)
     out += b"\0" * (HDR_SIZE - len(out))
     for nm in names:
         out += nm.encode()[:NAME_LEN].ljust(NAME_LEN, b"\0")
@@ -59,7 +68,12 @@ def build(blobs, names, out_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default="moe_out")
-    ap.add_argument("--shards", default="identity,dungeon,hardware,rustchain,lore")
+    # The default ORDER is moe_shards.SHARDS, not a hand-typed list: the bank
+    # index IS the expert id the generated router returns, so a different order
+    # here would route every prompt into the wrong expert while everything
+    # still "worked".  Overriding --shards is for partial banks only.
+    ap.add_argument("--shards",
+                    default=",".join(n for n, _ in moe_shards.SHARDS))
     ap.add_argument("--out", default="filesystem_moe/sophia_moe.bin")
     a = ap.parse_args()
     names = a.shards.split(",")
@@ -68,6 +82,11 @@ def main():
     if missing:
         raise SystemExit("missing: %s (run qat_npz_to_seq.py first)" % missing)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
+    router_order = [n for n, _ in moe_shards.SHARDS]
+    if names != router_order:
+        print("WARNING: bank order %s != router order %s -- the ROM will route "
+              "prompts into the wrong experts unless this is a deliberate "
+              "partial bank" % (names, router_order), file=sys.stderr)
     info = build(blobs, names, a.out)
     print(json.dumps(info, indent=2))
     print("\nec_init(ec, rom_base, expert_len=%d, n_experts=%d, ...)"

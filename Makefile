@@ -246,6 +246,24 @@ $(BUILD_DIR)/legend_of_elya_dual.elf: $(BUILD_DIR)/dual_probe.o $(BUILD_DIR)/nan
 legend_of_elya_dual.z64: N64_ROM_TITLE="Elya Dual"
 legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
 
+# --- MoE ROM: route -> stream -> swap -> generate (moe_probe.c) ---
+#
+#   make moeprobe    needs filesystem_moe/sophia_moe.bin (training/make_moe_bank.py)
+moeprobe: legend_of_elya_moeprobe.z64
+
+$(BUILD_DIR)/legend_of_elya_moeprobe.dfs: filesystem_moe/sophia_moe.bin
+	@mkdir -p $(BUILD_DIR)
+	$(N64_MKDFS) $@ filesystem_moe/
+
+$(BUILD_DIR)/moe_probe.o: moe_probe.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -DRSP_MM_EPI_OVERLAP -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_moeprobe.elf: $(BUILD_DIR)/moe_probe.o $(BUILD_DIR)/nano_gpt_ec.o $(BUILD_DIR)/matmul_rsp2_ec.o $(BUILD_DIR)/rsp_mm2_ovl.o $(BUILD_DIR)/expert_cache.o
+
+legend_of_elya_moeprobe.z64: N64_ROM_TITLE="Elya MoE"
+legend_of_elya_moeprobe.z64: $(BUILD_DIR)/legend_of_elya_moeprobe.dfs
+
 # --- EC ROM: does an expert-sized PI DMA hide behind a token? (ec_probe.c) ---
 #
 #   make ecprobe     BASE / BLOCK / HIDE arms over the same 16 real tokens
