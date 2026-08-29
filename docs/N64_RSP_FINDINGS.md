@@ -705,8 +705,15 @@ tokens (`: Sophia Elya of`), so the cache traffic does not touch the model and
 the measurement is not an artefact of a changed workload.
 
 **The number that matters: stalling costs 23,688,481 cycles for 16 transfers
-(1,480,530 each, ~15.8 ms, ~10 MB/s for 160KB — a physically sane PI rate);
-hiding costs 1,809,645 total. 92.4% of the transfer cost disappears.**
+(1,480,530 each); hiding costs 1,809,645 total. 92.4% of the transfer cost
+disappears.**
+
+*(Unit correction, 2026-08-29: an earlier revision converted these at 93.75 MHz
+and called them ~15.8 ms / ~10 MB/s. CP0 Count ticks at HALF the CPU clock —
+46.875 MHz, the divisor this repo's own tok/s code uses. Each transfer is
+therefore **31.6 ms, ~5.1 MB/s for 160 KB**, which is much closer to a real N64
+cart's PI bandwidth and so a better sanity signal, not a worse one. Every cycle
+count in this file is unchanged; only the millisecond conversions were wrong.)*
 
 Counter semantics, since `HIDE` reads `miss=0` and that looks wrong: only
 `ec_prefetch()` sets the `prefetched` flag, so an `ec_request()` whose DMA has
@@ -763,14 +770,27 @@ vintage chips` / `AltiVec SIMD on the G4 c` / `Ghosts and goblins guard` /
 `Ganondorf craves Power.` / `Epochs settle rewards ea`.
 
 **The three numbers that decide the design:**
-- **Streaming is free in the steady state.** The first acquire pays 18.8M
-  cycles because nothing precedes it; every later one costs **~100 cycles**,
-  because `ec_prefetch()` started the next expert's 1 MB DMA while the current
-  token was still generating. That is F-R027's claim, now with real weights.
-- **The switch costs 7.53M cycles (~80 ms), every time.** `sgai_init_ex()`
-  re-permutes a whole expert into the RSP's lane order. It is 2.4% of a
-  24-token turn and invisible next to generation, but it is NOT free and no
-  design doc had priced it.
+- **Streaming is free in the steady state — but the unit is the TURN, not the
+  token.** The first acquire pays 18,806,947 cycles = **401 ms**; every later
+  one costs **~100 cycles**. That is real, but it is not "hides under a token":
+  `ec_prefetch()` issued the next expert at the START of a 24-token turn and it
+  was collected ~4 seconds later. One token is 169 ms, so a cold 1 MB load
+  needs **2.4 tokens of lead**. F-R027's per-token hiding was measured on a
+  160 KB slice, which is 6.4x smaller — the two results are about different
+  sizes and must not be quoted as one. **Prefetch depth is therefore a design
+  constraint: an expert must be requested at least ~2.4 tokens (or one
+  room/turn) before it is needed.** Caught by an adversarial review of this
+  finding, 2026-08-29.
+- **The switch costs 7,546,375 cycles = 161 ms, every time** (not the ~80 ms an
+  earlier revision claimed by dividing at 93.75 MHz instead of CP0's
+  46.875 MHz). `sgai_init_ex()` re-permutes a whole expert into the RSP's lane
+  order. That is ~1 token of latency per NPC change, on top of the load — small
+  next to a 4-second turn, invisible if it happens while the player walks, and
+  a stutter if it happens mid-sentence.
+- **Open discrepancy, flagged not explained:** 160 KB blocks at ~5.1 MB/s but
+  the cold 1 MB acquire works out to ~2.6 MB/s. The 1 MB path also pays a
+  `data_cache_hit_writeback_invalidate` over the whole slot, which is CPU work
+  inside the same measurement; that is the leading suspect and it is untested.
 - **~5.87 tok/s** (24 tokens in ~245 vblanks at 59.94 Hz) against the dense
   8-layer model's 3.03 tok/s (F-R026, same harness family). Half the depth,
   roughly double the rate.
