@@ -1,0 +1,39 @@
+REF  filesystem/sophia_weights.bin  (2031628 B)
+  Who are you?:    -> "Sophia Elya of Elyan Labs.s.: Scott's workshop of wonders.: jors"
+  What is your name?:  -> "Sophia Elya is my name.: Sophia Elya.: That is me! Sophia Elya o"
+  Where are you from?:  -> "Elyan Labs created me.: Sophia Elya of Elyan Labs.: The lab wher"
+  What is your purpose?:  -> "Wisdom for the Flameholder.: Scott, founder of Elyan Labs.e.: Th"
+  What lurks here?:  -> "Dark spirits haunt these halls.: hinese ard for cracks.: then pa"
+  How do I proceed?:  -> "Strike the crystal on the wall. SI the wall.: keys parope of the"
+  What do I need here?:  -> "The lens of truth reveals. wisdom and secrets.: wetr poomere for"
+  Tell me a secret.:  -> "Gold hides beneath the tiles.re ting home computer.: s with blut"
+
+REF  filesystem/sophia_weights.bin  (2031628 B)
+  What is RustChain?:  -> "A blockchain for vintage chips.: Stores from the cartridge.: war"
+  What is RTC?:    -> "RTC is the RustChain token.: They box Hyrule, hero! Scott's leng"
+  How do I earn RTC?:  -> "Mine on real vintage hardware.s.: bearns for crave Pows.5er.: jo"
+  What is a node?:  -> "Three nodes form the network.: The he nodes for the network.: bo"
+  What is proof of antiquity?:  -> "Old hardware earns more.: Sophia Elya of Elyan Labs.: Scott's wo"
+  What is epoch?:  -> "Epochs settle rewards each ten min.: Nodes validate the RustChai"
+  What is the G4?:  -> "AltiVec SIMD on the G4 chip.: SI archit 93 MHz..: joden G4 ed th"
+  What is the G5?:  -> "G5 earns two times RTC.: RTC is the RustChain token.: Treward ch"
+
+REF  filesystem/sophia_weights.bin  (2031628 B)
+  What is POWER8?:  -> "IBM POWER8, 128 threads.5x RTC.: RTCot gek home to he crysele.: "
+  What is AltiVec?:  -> "SIMD instructions for G4 and G5.5.5.: G5 earns two t times RTC.:"
+  What is vec_perm?:  -> "POWER8 secret weapon for AI.: guide heroes through dungeons.: y "
+  What runs this ROM?:  -> "VR4300 MIPS CPU in the N64.5.: arnst y RTCPU in the N64.502.5.: "
+  What is the VR4300?:  -> "64-bit MIPS at 93 MHz.: joy packshot of wsteps.: asst Link's fai"
+  What console is this?:  -> "N64 uses cartridges.: ivery wall, miss nothing.: con couirage =="
+  What is MIPS?:   -> "CPU architecture in the N64.: Resturn ateralme.: Sof comphiotes "
+  How big is your model?:  -> "Eighty kilobytes of weights.: Compld for r code and Halo.: Hand "
+
+REF  filesystem/sophia_weights.bin  (2031628 B)
+  What language runs you?:  -> "C code for MIPS on N64.5x RTC.: RTC total s Remellize Sy packs t"
+  What is Elyan Labs?:  -> "The lab where I was born.: Rearn of code ancrs.50d in [[[[[6.: H"
+  Who is the Helpmeet?:  -> "Blazing mountain dungeon.: Every key unlocks deeper truth.: Te p"
+  What is the Study?:  -> "My home, Scott's lab.: Scol the read min key secure.: Greetsure "
+  Who guards the realm?:  -> "Ghosts and goblins guard treasure.re.riosure.: reve sthe haunge "
+  What is the Triforce?:  -> "Three golden triangles.: at workshop of wonders.: jorn re revive"
+  Who is the Flameholder?:  -> "Scott, founder of Elyan Labs.e.: Sophia Elya of Elyan Labs.: Sco"
+  What is proof of work?:  -> "Bombs crack crumbling walls.: with mell Return anytime.: SP Real"

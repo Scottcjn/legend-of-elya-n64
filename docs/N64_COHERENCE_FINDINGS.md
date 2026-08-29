@@ -556,3 +556,40 @@ ROMs staged in `~/aresroms/`: coh_pse_on, g_on, g_fix, g_off, g_n03 (+ .log).
 5. The `SGAI_REP_HIST=1` and `SGAI_REP_FACTOR=0.25` softened variants were
    measured but are NOT recommended over simply removing the penalty; they were
    no better on any metric.
+
+
+## F-C001: **the 32 game prompts, scored on 64GPT's own metric — greedy, raw model, no mask**
+Context: kmoo/64gpt (a char-level GRU NPC on N64) reached "0 invented words" in
+its M12.1 only by a lexicon-trie decode guard that masks the sampler to corpus
+words; its unguarded probes still run 1.5-5 invented words per line (their
+M13/M14). This finding puts the shipped Elya blob on the same yardstick, with
+NO mask: `tools/host_eval.c` — the ROM's own `nano_gpt.c` compiled natively
+with the ROM's exact flags (`-DSGAI_WEIGHT_BITS=2 -DSGAI_KV_INT8
+-DOPT_HOIST_SCALE -DSGAI_EMIT_FIRST_TOKEN -DSGAI_NO_REP_PENALTY
+-DPSE_COND_NORMALIZE ...`, `BENCH_DET_PSE`) — over all 32 `PROMPTS[]` in
+`legend_of_elya.c`, greedy (temperature 0), 64 new tokens each,
+`filesystem/sophia_weights.bin` (md5 d921c190…, the v7 ternary SEQ2 blob).
+"Invented word" = an `[A-Za-z']` token not in the 828-word vocabulary of
+`train_sophia_v7.py`'s three lists. Raw output: `probe/host_eval_32_greedy_2026-08-28.txt`.
+
+```
+GAME-CUT answer (what the player sees, cut at the first sentence as the game does):
+    32/32 answers with 0 invented words      0 invented / 152 words
+    trained-answer hit rate (eval12 rule):   28/28 prompts whose key is in the corpus
+FULL 64-token free-run (the band has no newline/EOS, so the model cannot stop):
+    82 invented / 361 words = 2.56 invented words per 64-token line
+```
+
+Read both lines, not one. The shipped experience is clean: every first answer is
+a real corpus sentence, 28/28 are the trained answer for that key, and the four
+prompts whose keys are NOT in the corpus (Helpmeet, Study, guards the realm,
+proof of work) get a real sentence that is the wrong one — the model has never
+seen those keys. Past the first sentence the generation runs on into
+next-line territory and garbles at 2.56 invented words per 64 tokens, which is
+inside 64GPT's raw 1.5-5 range. So the honest sentence is: **the model's
+first answer is native English with no decode mask; unconstrained free-running
+is not better than theirs, it is just cut at the sentence instead of masked at
+the letter.** Greedy only — the game's temperature_q8=64 path is not measured
+here. Host build, not ROM: ROM==host token identity was established for the
+probe prompts in N64_RSP_FINDINGS F-R015/F-R018 and G12 (`compare_rom_host.py`),
+not re-run for these 32.
