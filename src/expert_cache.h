@@ -33,6 +33,8 @@ typedef struct {
     EcSlot   slot[EC_MAX_SLOTS];
     uint32_t clock;             /* monotonically increasing LRU stamp */
     uint16_t inflight_slot;     /* slot with a pending DMA, or NONE   */
+    uint16_t pending;           /* prefetch deferred behind a busy bus */
+    uint16_t pending_keep;      /* its `keep` argument                 */
     /* stats — worth showing on screen, this is the whole trick */
     uint32_t hits, misses, prefetch_hits;
 } ExpertCache;

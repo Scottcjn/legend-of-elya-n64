@@ -112,12 +112,23 @@ static uint8_t idle_tokens(uint8_t tok, int n)
 static void run_walk(const Walk *w, int prefetch)
 {
     uint32_t stall_total = 0, swap_total = 0, worst = 0;
+    /* F-R030 follow-up: ec_start_load() opens with ec_settle(), a BLOCKING
+     * dma_wait().  So a request or a speculative prefetch can pay for the
+     * PREVIOUS transfer, and that time is spent inside those calls -- not
+     * inside ec_acquire(), which is all the first version of this probe
+     * timed.  Time all three. */
+    uint32_t req_total = 0, pre_total = 0, ling_total = 0;
     int cold = 0;
 
     uint8_t *slots[PF_SLOTS];
     for (int i = 0; i < PF_SLOTS; i++) slots[i] = ecmem[i];
     ec_init(&EC, EC_ROM, EC_LEN, EC_N, slots, PF_SLOTS);
     resident = 0xFFFF;
+#ifdef PF_VERBOSE
+    sprintf(pl, "PF  walk=%s pf=%d n=%d linger_field=%d (macro %d)\n",
+            w->name, prefetch, w->n, w->linger, PF_LINGER_TOKENS);
+    ISV(pl);
+#endif
 
     for (int step = 0; step < w->n; step++) {
         const Room *r = &MAP[w->path[step]];
@@ -125,16 +136,25 @@ static void run_walk(const Walk *w, int prefetch)
         /* Entering a room is when the game knows what is coming: ask for this
          * room's expert, and for the NEXT room's while the player is still
          * here. That second request is the whole thesis. */
-        if (prefetch) {
-            ec_request(&EC, r->expert);
-            if (step + 1 < w->n) {
-                uint16_t nxt = MAP[w->path[step + 1]].expert;
-                if (nxt != r->expert) ec_prefetch(&EC, nxt, r->expert);
-            }
+        uint32_t q0, q1, q2;
+        CP0(q0);
+        if (prefetch) ec_request(&EC, r->expert);
+        CP0(q1);
+        if (prefetch && step + 1 < w->n) {
+            uint16_t nxt = MAP[w->path[step + 1]].expert;
+            if (nxt != r->expert) ec_prefetch(&EC, nxt, r->expert);
         }
+        CP0(q2);
+        req_total += q1 - q0; pre_total += q2 - q1;
 
+        /* The linger is the ONLY thing that supplies lead, so it must never
+         * be skipped silently -- time it and report is_loaded alongside. */
         uint8_t tok = 0;
-        if (w->linger && ST.is_loaded) tok = idle_tokens(tok, w->linger);
+        uint32_t l0, l1;
+        CP0(l0);
+        if (w->linger) tok = idle_tokens(tok, w->linger);
+        CP0(l1);
+        ling_total += l1 - l0;
 
         uint32_t t0, t1, t2;
         CP0(t0);
@@ -148,6 +168,14 @@ static void run_walk(const Walk *w, int prefetch)
         CP0(t2);
 
         uint32_t stall = t1 - t0, swap = t2 - t1;
+#ifdef PF_VERBOSE
+        sprintf(pl, "PF   step%d %-8s e=%u req=%u ms pre=%u ms stall=%u ms "
+                    "linger=%u ms loaded=%d inflight=%u\n",
+                step, r->room, (unsigned)r->expert, MS(q1 - q0), MS(q2 - q1),
+                MS(stall), MS(l1 - l0), ST.is_loaded,
+                (unsigned)EC.inflight_slot);
+        ISV(pl);
+#endif
         stall_total += stall; swap_total += swap;
         if (stall > worst) worst = stall;
         if (MS(stall) > 50) cold++;
@@ -159,9 +187,10 @@ static void run_walk(const Walk *w, int prefetch)
         tok = idle_tokens(tok, PF_NGEN);
     }
 
-    sprintf(pl, "PF %s pf=%d stall=%u ms (worst %u ms, %d felt) swap=%u ms "
-                "hits=%u miss=%u pfhit=%u\n",
-            w->name, prefetch, MS(stall_total), MS(worst), cold, MS(swap_total),
+    sprintf(pl, "PF %s pf=%d req=%u ms pre=%u ms ling=%u ms stall=%u ms (worst %u ms, "
+                "%d felt) swap=%u ms hits=%u miss=%u pfhit=%u\n",
+            w->name, prefetch, MS(req_total), MS(pre_total), MS(ling_total),
+            MS(stall_total), MS(worst), cold, MS(swap_total),
             (unsigned)EC.hits, (unsigned)EC.misses, (unsigned)EC.prefetch_hits);
     ISV(pl);
 }

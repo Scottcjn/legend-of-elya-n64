@@ -1,0 +1,53 @@
+Loaded pfk
+Opening TCP-server on 127.0.0.1:9124
+Vulkan Enabled: using paraLLEl-RDP
+PF BANK n=5 len=1048592 slots=2 linger=3 tok ngen=8
+PF  walk=STROLL    pf=0 n=3 linger_field=3 (macro 3)
+PF   step0 Forge    e=1 req=0 ms pre=0 ms stall=202 ms linger=459 ms loaded=1 inflight=65535
+PF   step1 Vault    e=0 req=0 ms pre=0 ms stall=202 ms linger=508 ms loaded=1 inflight=65535
+PF   step2 Study    e=4 req=0 ms pre=0 ms stall=202 ms linger=514 ms loaded=1 inflight=65535
+PF STROLL    pf=0 req=0 ms pre=0 ms ling=1483 ms stall=606 ms (worst 202 ms, 3 felt) swap=481 ms hits=0 miss=3 pfhit=0
+PF  walk=STROLL    pf=1 n=3 linger_field=3 (macro 3)
+PF   step0 Forge    e=1 req=2 ms pre=0 ms stall=2 ms linger=502 ms loaded=1 inflight=1
+PF   step1 Vault    e=0 req=0 ms pre=2 ms stall=0 ms linger=508 ms loaded=1 inflight=65535
+PF   step2 Study    e=4 req=0 ms pre=0 ms stall=0 ms linger=514 ms loaded=1 inflight=65535
+PF STROLL    pf=1 req=2 ms pre=2 ms ling=1526 ms stall=2 ms (worst 2 ms, 0 felt) swap=481 ms hits=1 miss=0 pfhit=2
+PF  walk=SPRINT    pf=0 n=3 linger_field=0 (macro 3)
+PF   step0 Depths   e=2 req=0 ms pre=0 ms stall=202 ms linger=0 ms loaded=1 inflight=65535
+PF   step1 Archive  e=3 req=0 ms pre=0 ms stall=202 ms linger=0 ms loaded=1 inflight=65535
+PF   step2 Forge    e=1 req=0 ms pre=0 ms stall=202 ms linger=0 ms loaded=1 inflight=65535
+PF SPRINT    pf=0 req=0 ms pre=0 ms ling=0 ms stall=606 ms (worst 202 ms, 3 felt) swap=481 ms hits=0 miss=3 pfhit=0
+PF  walk=SPRINT    pf=1 n=3 linger_field=0 (macro 3)
+PF   step0 Depths   e=2 req=2 ms pre=0 ms stall=199 ms linger=0 ms loaded=1 inflight=65535
+PF   step1 Archive  e=3 req=2 ms pre=0 ms stall=199 ms linger=0 ms loaded=1 inflight=65535
+PF   step2 Forge    e=1 req=2 ms pre=0 ms stall=199 ms linger=0 ms loaded=1 inflight=65535
+PF SPRINT    pf=1 req=8 ms pre=0 ms ling=0 ms stall=597 ms (worst 199 ms, 3 felt) swap=481 ms hits=0 miss=1 pfhit=2
+PF  walk=BACKTRACK pf=0 n=5 linger_field=3 (macro 3)
+PF   step0 Forge    e=1 req=0 ms pre=0 ms stall=202 ms linger=508 ms loaded=1 inflight=65535
+PF   step1 Vault    e=0 req=0 ms pre=0 ms stall=202 ms linger=508 ms loaded=1 inflight=65535
+PF   step2 Forge    e=1 req=0 ms pre=0 ms stall=0 ms linger=514 ms loaded=1 inflight=65535
+PF   step3 Vault    e=0 req=0 ms pre=0 ms stall=0 ms linger=508 ms loaded=1 inflight=65535
+PF   step4 Forge    e=1 req=0 ms pre=0 ms stall=0 ms linger=514 ms loaded=1 inflight=65535
+PF BACKTRACK pf=0 req=0 ms pre=0 ms ling=2555 ms stall=404 ms (worst 202 ms, 2 felt) swap=803 ms hits=3 miss=2 pfhit=0
+PF  walk=BACKTRACK pf=1 n=5 linger_field=3 (macro 3)
+PF   step0 Forge    e=1 req=2 ms pre=0 ms stall=2 ms linger=508 ms loaded=1 inflight=1
+PF   step1 Vault    e=0 req=0 ms pre=0 ms stall=0 ms linger=508 ms loaded=1 inflight=65535
+PF   step2 Forge    e=1 req=0 ms pre=0 ms stall=0 ms linger=514 ms loaded=1 inflight=65535
+PF   step3 Vault    e=0 req=0 ms pre=0 ms stall=0 ms linger=508 ms loaded=1 inflight=65535
+PF   step4 Forge    e=1 req=0 ms pre=0 ms stall=0 ms linger=514 ms loaded=1 inflight=65535
+PF BACKTRACK pf=1 req=2 ms pre=0 ms ling=2555 ms stall=2 ms (worst 2 ms, 0 felt) swap=803 ms hits=4 miss=0 pfhit=1
+PF  walk=TOUR      pf=0 n=5 linger_field=3 (macro 3)
+PF   step0 Forge    e=1 req=0 ms pre=0 ms stall=202 ms linger=508 ms loaded=1 inflight=65535
+PF   step1 Vault    e=0 req=0 ms pre=0 ms stall=202 ms linger=508 ms loaded=1 inflight=65535
+PF   step2 Study    e=4 req=0 ms pre=0 ms stall=202 ms linger=514 ms loaded=1 inflight=65535
+PF   step3 Depths   e=2 req=0 ms pre=0 ms stall=202 ms linger=502 ms loaded=1 inflight=65535
+PF   step4 Archive  e=3 req=0 ms pre=0 ms stall=202 ms linger=510 ms loaded=1 inflight=65535
+PF TOUR      pf=0 req=0 ms pre=0 ms ling=2545 ms stall=1010 ms (worst 202 ms, 5 felt) swap=803 ms hits=0 miss=5 pfhit=0
+PF  walk=TOUR      pf=1 n=5 linger_field=3 (macro 3)
+PF   step0 Forge    e=1 req=2 ms pre=0 ms stall=2 ms linger=504 ms loaded=1 inflight=1
+PF   step1 Vault    e=0 req=0 ms pre=2 ms stall=0 ms linger=508 ms loaded=1 inflight=65535
+PF   step2 Study    e=4 req=0 ms pre=2 ms stall=0 ms linger=514 ms loaded=1 inflight=65535
+PF   step3 Depths   e=2 req=0 ms pre=2 ms stall=0 ms linger=503 ms loaded=1 inflight=65535
+PF   step4 Archive  e=3 req=0 ms pre=0 ms stall=0 ms linger=510 ms loaded=1 inflight=65535
+PF TOUR      pf=1 req=2 ms pre=8 ms ling=2541 ms stall=2 ms (worst 2 ms, 0 felt) swap=803 ms hits=1 miss=0 pfhit=4
+PF_DONE

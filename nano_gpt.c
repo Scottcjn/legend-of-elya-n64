@@ -1084,6 +1084,19 @@ void sgai_init(SGAIState *state, const void *rom_weights)
 void sgai_init_ex(SGAIState *state, const void *rom_weights,
                   int engine, SGAIScratch *scratch, int pse)
 {
+    /* Re-initialising a state must NOT allocate a second KV cache.  An MoE
+     * expert swap calls this on every NPC change, this engine contains no
+     * free(), and sizeof(SGAIKVCache) is 589,828 bytes with SGAI_KV_INT8 --
+     * so the 15th swap exhausts RDRAM, memalign() returns NULL, and
+     * sgai_next_token()'s `if (!state->kv) return 0;` turns every subsequent
+     * "generated" token into a silent no-op that costs no time and produces
+     * no text.  That is exactly how F-R030's TOUR walk measured a 3-token
+     * linger as 0 ms.  Carry the buffer this state already owns across the
+     * re-init; it is reset below either way.
+     *
+     * Requires SGAIState to be zeroed before its FIRST sgai_init_ex(), which
+     * is true of every caller in this tree (all statics). */
+    SGAIKVCache *kv_keep = state->kv;
     memset(state, 0, sizeof(SGAIState));
     state->engine   = engine;
     state->sc       = scratch ? scratch : &sgai_shared_scratch;
@@ -1132,8 +1145,9 @@ void sgai_init_ex(SGAIState *state, const void *rom_weights,
         }
     }
 
-    /* Allocate KV cache in RDRAM (8-byte aligned for DMA) */
-    state->kv = (SGAIKVCache *)memalign(8, sizeof(SGAIKVCache));
+    /* KV cache in RDRAM (8-byte aligned for DMA), allocated ONCE per state. */
+    state->kv = kv_keep ? kv_keep
+                        : (SGAIKVCache *)memalign(8, sizeof(SGAIKVCache));
     if (state->kv) {
         memset(state->kv, 0, sizeof(SGAIKVCache));
         state->kv->pos = 0;

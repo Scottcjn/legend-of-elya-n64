@@ -897,6 +897,10 @@ the same frame) improves 606 -> 597 ms, i.e. not at all. A game that lets the
 player talk instantly must cover the load some other way — a cutscene, a door
 animation, an NPC turning to face you.
 
+**5. RESOLVED the same day — see F-R031. It was two silent bugs, not a
+scheduling subtlety.** The paragraph below is kept as written, because the
+process of being wrong in public is the point.
+
 **5. UNEXPLAINED, and stated as such.** TOUR and BACKTRACK still pay ~200 ms per
 room WITH prefetch on, and every acquire is reported as a `prefetch_hit` — the
 transfer was in flight but had not finished. STROLL's first three rooms are the
@@ -914,3 +918,61 @@ declined-no-victim) and the in-flight expert id at each acquire.
 dialogue open; group NPCs so consecutive rooms share a domain where the story
 allows; and treat any place the player can talk with zero warning as a place
 that needs authored cover.
+
+
+## F-R031: **the unexplained TOUR stall was a KV-cache leak and a dropped prefetch — 1010 ms -> 2 ms**
+F-R030 left one result unexplained: TOUR and BACKTRACK paid ~200 ms per room
+even with prefetch on, and slot count changed nothing. Two bugs, both silent,
+both found by instrumenting rather than reasoning.
+
+**Bug 1 (the engine, `nano_gpt.c`): every expert swap leaked a KV cache.**
+`sgai_init_ex()` ends with `state->kv = memalign(8, sizeof(SGAIKVCache))`, and
+this engine contains **no `free()` at all**. With `SGAI_KV_INT8` that is 589,828
+bytes per call, so the ~15th expert swap exhausts RDRAM and `memalign()` returns
+NULL. Nothing crashes. `sgai_next_token()` opens with `if (!state->kv) return 0;`
+— so from that point on every "generated" token is a no-op that produces no
+text and **costs no time**. That is precisely how the probe measured a 3-token
+linger as **0 ms**: the walks that stalled were not being given lead, because
+their lead had silently become free. `linger_field=3` printed correctly next to
+`ling=0 ms`, which is what finally exposed it. Fixed by carrying the state's
+existing KV buffer across a re-init instead of allocating a second one.
+
+**Bug 2 (the cache, `src/expert_cache.c`): `ec_prefetch()` dropped every request
+it could not start immediately.** Its guard was `if (inflight_slot != NONE)
+return;` — and the caller's own `ec_request()` starts a DMA one line earlier, so
+on any walk into rooms the cache has not seen, the prefetch that follows ALWAYS
+hit that guard and did nothing. `pre=0 ms` on every arm was the tell. Fixed by
+remembering the deferred request (`pending`/`pending_keep`) and issuing it from
+`ec_poll()` the moment the demand transfer retires.
+
+**Bug 3 (the counter): `ec_acquire()` credited a blocking wait as a
+`prefetch_hit`.** Branch 2 — "a transfer for this expert is still in flight, so
+block" — incremented `prefetch_hits` unconditionally, without checking whether
+speculation had started it. Every stalled walk therefore reported prefetch
+*successes* proportional to its stalls, which is why F-R030's table looked
+plausible while describing a system where prefetch was doing nothing. A demand
+load that has not landed is now counted as a miss.
+
+**After all three fixes** (`probe/prefetch_probe_fixed_2026-08-29.log`):
+```
+walk        prefetch   stall (F-R030)      stall (now)   linger actually spent
+STROLL         ON            0 ms              2 ms           1526 ms
+SPRINT         ON          597 ms            597 ms              0 ms  (by design)
+BACKTRACK      ON          398 ms         ->   2 ms           2555 ms
+TOUR           ON          996 ms         ->   2 ms           2541 ms
+```
+**TOUR: 1010 ms of stall without prefetch, 2 ms with it.** SPRINT is unchanged
+and should be: it grants zero lead by construction, and no cache can prefetch
+what it is not told about in advance.
+
+**Regression, because `nano_gpt.c` is the engine that carries the bit-exactness
+claim:** `make xchk` still reports **MATCH 16/16, MATCH 48/48, XCHK PASS** on
+console, and `make moeprobe`'s six expert answers are character-identical to
+the pre-fix run. The KV fix changes allocation, not arithmetic, and that is now
+demonstrated rather than asserted.
+
+**The pattern, for the third time tonight:** an absent card that reads as fast,
+an open-bus DMA with the right duration, a leaked allocation that turns
+inference into a free no-op. None of them raised an error; each one made a
+measurement look *better* than reality. The linger timer that caught this one
+existed only because the previous finding was left honestly unexplained.

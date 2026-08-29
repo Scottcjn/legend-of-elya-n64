@@ -45,6 +45,8 @@ int ec_init(ExpertCache *ec, uint32_t rom_base, uint32_t expert_len,
     ec->n_experts  = n_experts;
     ec->n_slots    = n_slots;
     ec->inflight_slot = EC_NO_EXPERT;
+    ec->pending       = EC_NO_EXPERT;
+    ec->pending_keep  = EC_NO_EXPERT;
     for (uint16_t s = 0; s < n_slots; s++) {
         ec->slot[s].mem    = slots_mem[s];
         ec->slot[s].expert = EC_NO_EXPERT;
@@ -75,12 +77,33 @@ static int ec_find(ExpertCache *ec, uint16_t expert)
  * every subsequent call, prefetching silently switches itself off, and the
  * slot is leaked because ec_victim() skips slots marked `loading`.
  * Must be called on every entry point, including the acquire HIT path. */
+static int  ec_find(ExpertCache *ec, uint16_t expert);
+static int  ec_victim(ExpertCache *ec, uint16_t keep);
+static void ec_start_load(ExpertCache *ec, uint16_t expert, int slot,
+                          int speculative);
+
 static void ec_poll(ExpertCache *ec)
 {
-    if (ec->inflight_slot == EC_NO_EXPERT) return;
-    if (ec_dma_busy()) return;                 /* still moving; do not block */
-    ec->slot[ec->inflight_slot].loading = 0;
-    ec->inflight_slot = EC_NO_EXPERT;
+    if (ec->inflight_slot != EC_NO_EXPERT) {
+        if (ec_dma_busy()) return;             /* still moving; do not block */
+        ec->slot[ec->inflight_slot].loading = 0;
+        ec->inflight_slot = EC_NO_EXPERT;
+    }
+    /* A speculative request made while the bus was busy is remembered rather
+     * than dropped, and issued here the moment the demand load retires.
+     * Without this, ec_prefetch() is dead on any walk through NEW rooms: the
+     * caller's own ec_request() starts a DMA one line earlier, so the prefetch
+     * that follows always hits the busy guard and silently does nothing — the
+     * prefetch counters still read plausibly, which is why F-R030 measured
+     * "prefetch on" and "prefetch off" as the same number. */
+    if (ec->pending != EC_NO_EXPERT && ec->inflight_slot == EC_NO_EXPERT) {
+        uint16_t want = ec->pending, keep = ec->pending_keep;
+        ec->pending = EC_NO_EXPERT;
+        if (want < ec->n_experts && ec_find(ec, want) < 0) {
+            int v = ec_victim(ec, keep);
+            if (v >= 0) ec_start_load(ec, want, v, 1);
+        }
+    }
 }
 
 int ec_resident(ExpertCache *ec, uint16_t expert)
@@ -177,9 +200,13 @@ const uint8_t *ec_acquire(ExpertCache *ec, uint16_t expert)
         return ec->slot[s].mem;
     }
     if (s >= 0) {
-        /* a prefetch was still in flight for exactly this expert — we arrived
-         * early, so pay only the remainder of the transfer */
-        ec->prefetch_hits++;
+        /* A transfer for exactly this expert is still in flight, so this call
+         * is about to BLOCK.  Credit it to speculation only if speculation is
+         * what started it; a demand load that has not landed is a miss, not a
+         * win.  Counting both as prefetch_hits made the stat read as success
+         * on every stalled walk (F-R030's unexplained TOUR result). */
+        if (ec->slot[s].prefetched) ec->prefetch_hits++;
+        else                        ec->misses++;
         ec->slot[s].prefetched = 0;
         ec_settle(ec);
         ec_touch(ec, (uint16_t)s);
@@ -199,9 +226,18 @@ void ec_prefetch(ExpertCache *ec, uint16_t expert, uint16_t keep)
     if (expert >= ec->n_experts || expert == keep) return;
     ec_poll(ec);
     if (ec_find(ec, expert) >= 0) return;         /* already here/coming */
-    if (ec->inflight_slot != EC_NO_EXPERT) return; /* don't queue behind */
+    if (ec->inflight_slot != EC_NO_EXPERT) {
+        /* Do not queue behind the bus -- but do not FORGET either.  ec_poll()
+         * issues this the moment the current transfer retires, which is what
+         * makes prefetch work on a walk through rooms the cache has never
+         * seen: the caller's own ec_request() is always in flight one line
+         * earlier.  Newest intent wins; a stale one is simply overwritten. */
+        ec->pending      = expert;
+        ec->pending_keep = keep;
+        return;
+    }
 
     int v = ec_victim(ec, keep);
-    if (v < 0) return;                            /* nothing safe to evict */
+    if (v < 0) { ec->pending = expert; ec->pending_keep = keep; return; }
     ec_start_load(ec, expert, v, 1);
 }
