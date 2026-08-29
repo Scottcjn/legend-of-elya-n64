@@ -715,9 +715,81 @@ the transfers really happened and had finished before the CPU asked. `BLOCK`'s
 `miss=16` is 16 genuine blocking transfers — that arm is what proves the bytes
 move at all.
 
+**CORRECTION (same day, found by F-R028): these transfers read OPEN BUS, not
+weights.** `src/expert_cache.c` passed `dfs_rom_addr()`'s KSEG1 pointer
+(`0xB0...`) straight to `dma_read_async()`, which — unlike `dma_read()` — does
+not mask it to a physical PI address. The PI therefore read unmapped space and
+filled the slot with an address echo. The transfers were the right size, the
+right duration and reported no error; only the bytes were wrong, which is why
+nothing here caught it. **The timing conclusion below still stands** (a PI
+transfer of that length was really issued and really waited on, and F-R028
+re-measures the same hiding with correct bytes), but this probe never verified
+its contents and should have. Fixed by masking with `& 0x1FFFFFFF`; the lesson
+is the one this repo keeps re-learning — measure the bytes, not just the clock.
+
 **What this licenses and what it does not.** It licenses training a real MoE for
 this machine: the streaming half of the design is now measured, not assumed, and
 F-R026's newly-idle CPU time is what pays for it. It does NOT show a speedup —
 there is no MoE model, so there is nothing yet to be faster than. And it is one
 DMA per token; an 8-expert-per-layer design would issue far more, which this
 probe does not test. Still ares, not silicon.
+
+
+## F-R028: **a real ternary MoE, streamed from cartridge, on the console — 5.87 tok/s**
+F-R027 measured the streaming mechanism with no experts to stream. There are
+now five. `training/train_sophia_v9_qat.py --shard` trains one ternary expert
+per topic cluster of the v7 corpus (the clusters `legend_of_elya.c`'s own
+`PROMPTS[]` array already uses); each expert is **4 layers x 256d, 3,211,264
+params, a complete 1,048,588 B SEQ2 blob**, so `ec_acquire()` returns something
+`sgai_init_ex()` loads directly and an expert switch is a pointer swap, not a
+new parser. `training/make_moe_bank.py` lays them at the uniform stride
+`ec_init()` requires; `tools/gen_moe_router.py` compiles the ROM's router from
+the trainer's own shard table so training labels and runtime routing cannot
+drift. Bank: 5 MB cartridge, 2 MB resident (2 slots).
+
+**`make moeprobe`, ares 147** (`probe/moe_probe_2026-08-28.log`), route ->
+stream -> swap -> 24 greedy tokens, RSP + F-R026 overlap on:
+```
+prompt                  expert      acquire CP0    swap CP0     gen CP0   vbl
+Who are you?            identity     18,807,056   7,545,350  295,657,708  244
+What is RustChain?      rustchain           167   7,531,773  347,926,766  252
+What is the G4?         hardware             99   7,531,695  321,473,494  248
+What lurks here?        dungeon              95   7,531,947  330,223,665  249
+Who is Ganon?           lore                 94   7,532,853  303,911,234  245
+What is epoch?          rustchain           157   7,524,189  312,420,256  246
+```
+Answers, on console, one per expert: `I am Sophia Elya.` / `A blockchain for
+vintage chips` / `AltiVec SIMD on the G4 c` / `Ghosts and goblins guard` /
+`Ganondorf craves Power.` / `Epochs settle rewards ea`.
+
+**The three numbers that decide the design:**
+- **Streaming is free in the steady state.** The first acquire pays 18.8M
+  cycles because nothing precedes it; every later one costs **~100 cycles**,
+  because `ec_prefetch()` started the next expert's 1 MB DMA while the current
+  token was still generating. That is F-R027's claim, now with real weights.
+- **The switch costs 7.53M cycles (~80 ms), every time.** `sgai_init_ex()`
+  re-permutes a whole expert into the RSP's lane order. It is 2.4% of a
+  24-token turn and invisible next to generation, but it is NOT free and no
+  design doc had priced it.
+- **~5.87 tok/s** (24 tokens in ~245 vblanks at 59.94 Hz) against the dense
+  8-layer model's 3.03 tok/s (F-R026, same harness family). Half the depth,
+  roughly double the rate.
+
+**Quality, on the same 32 game prompts and the same metric as the dense
+baseline** (`training/eval_moe.py`, C027's rule, no decode mask):
+```
+                     answers with 0 invented words   trained-answer hits   free-run 64 tok
+dense 8L (C027)              32/32                        28/28            2.56 inv/line
+MoE routed 5x4L              31/32                        28/28            1.84 inv/line
+```
+Identical trained-answer accuracy, **28% less garble in the unconstrained
+free run**, at half the active parameters and roughly double the speed. The one
+lost answer is `Who is the Helpmeet?` -> `Wigind byte stored first` (`Wigind`
+invented); that key is not in the corpus, so neither model knows it — the dense
+model happened to fall back on a real-word sentence and this one did not.
+
+**Honest limits.** Total bank is 16M params but only 3.2M are ever active, so
+this is capacity-per-fact, not a bigger model. Routing is substring matching, so
+a prompt with no keyword lands in `identity` by construction — there is no
+learned router and no top-k mixing; this is Lock-On routing, one expert per
+prompt. 12,000 steps per expert, one seed, no sweep. Still ares, not silicon.

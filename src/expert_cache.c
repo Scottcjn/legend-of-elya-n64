@@ -49,6 +49,15 @@ int ec_init(ExpertCache *ec, uint32_t rom_base, uint32_t expert_len,
         ec->slot[s].mem    = slots_mem[s];
         ec->slot[s].expert = EC_NO_EXPERT;
     }
+    /* Uniform stride.  This was MISSING: memset() left every expert_off[] at
+     * zero, so ec_request() DMA'd expert 0's bytes for every expert id and
+     * nothing complained -- the transfers were the right size and the right
+     * duration, just from the wrong address.  The host suites stub the DMA and
+     * assert on slot bookkeeping, so they could not see it, and F-R027 timed
+     * the transfers without ever checking their contents.  A caller wanting a
+     * non-uniform bank can still overwrite expert_off[] after ec_init(). */
+    for (uint16_t e = 0; e < n_experts; e++)
+        ec->expert_off[e] = (uint32_t)e * expert_len;
     return 0;
 }
 
@@ -129,8 +138,13 @@ static void ec_start_load(ExpertCache *ec, uint16_t expert, int slot,
     /* Flush+invalidate the destination BEFORE the PI engine writes it. */
     ec_dcache_prep(ec->slot[slot].mem, ec->expert_len);
 
+    /* PHYSICAL address.  dma_read() masks KSEG1 for you; the raw async path
+     * does not, so handing it a 0xB0... pointer (which is exactly what
+     * dfs_rom_addr() returns) makes the PI read unmapped space and fill the
+     * slot with address-echo instead of weights -- same duration, same size,
+     * wrong bytes, no error anywhere. */
     dma_read_async(ec->slot[slot].mem,
-                   ec->rom_base + ec->expert_off[expert],
+                   (ec->rom_base + ec->expert_off[expert]) & 0x1FFFFFFFul,
                    ec->expert_len);
 }
 

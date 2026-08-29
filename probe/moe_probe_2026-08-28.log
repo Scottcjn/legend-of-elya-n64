@@ -1,0 +1,27 @@
+Loaded moe
+Opening TCP-server on 127.0.0.1:9124
+Vulkan Enabled: using paraLLEl-RDP
+MOE BANK n=5 len=1048592 base=112 rom=b0025fd0 slots=2
+[96m[unusual] [0mRSP DMA writing to RDRAM address 0x25358 which is cached (missing cache invalidation?)
+	Cacheline was loaded at CPU PC: 0xffffffff8001ae30
+	RSP DMA started at RSP PC: 0x080
+
+MOE[0] Who are you?:  -> expert 4 (identity)
+MOE[0] acquire=18806947 swap=7546375 gen=295392508 vbl=243 hits=0 miss=1 pf=0
+MOE[0] TEXT I am Sophia Elya.: Sophi
+MOE[1] What is RustChain?:  -> expert 0 (rustchain)
+MOE[1] acquire=144 swap=7523591 gen=347537102 vbl=252 hits=0 miss=1 pf=1
+MOE[1] TEXT A blockchain for vintage
+MOE[2] What is the G4?:  -> expert 1 (hardware)
+MOE[2] acquire=94 swap=7533473 gen=321192775 vbl=248 hits=0 miss=1 pf=2
+MOE[2] TEXT AltiVec SIMD on the G4 c
+MOE[3] What lurks here?:  -> expert 2 (dungeon)
+MOE[3] acquire=91 swap=7523348 gen=329869038 vbl=248 hits=0 miss=1 pf=3
+MOE[3] TEXT Ghosts and goblins guard
+MOE[4] Who is Ganon?:  -> expert 3 (lore)
+MOE[4] acquire=94 swap=7532853 gen=303911234 vbl=245 hits=0 miss=1 pf=4
+MOE[4] TEXT Ganondorf craves Power.A
+MOE[5] What is epoch?:  -> expert 0 (rustchain)
+MOE[5] acquire=157 swap=7524189 gen=312420256 vbl=246 hits=0 miss=1 pf=5
+MOE[5] TEXT Epochs settle rewards ea
+MOE_DONE

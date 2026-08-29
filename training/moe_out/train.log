@@ -1,0 +1,26 @@
+=== identity ===
+[identity] step   8000/12000 train=0.1654 fit=0.1750 val=0.1733 best=0.1733@8000 lr=4.21e-04 gn=0.08 329s eta=2.7m
+[identity] step  10000/12000 train=0.1639 fit=0.1704 val=0.1694 best=0.1694@10000 lr=1.35e-04 gn=0.06 411s eta=1.4m
+[identity] step  12000/12000 train=0.1597 fit=0.1687 val=0.1671 best=0.1671@12000 lr=3.00e-05 gn=0.06 493s eta=0.0m
+[identity] DONE final_val=0.1671 final_fit=0.1687 best_val=0.1671@12000 blob=1,048,588B in 493s
+=== dungeon ===
+[dungeon] step   8000/12000 train=0.1819 fit=0.1773 val=0.1778 best=0.1778@8000 lr=4.21e-04 gn=0.09 328s eta=2.7m
+[dungeon] step  10000/12000 train=0.1757 fit=0.1743 val=0.1736 best=0.1736@10000 lr=1.35e-04 gn=0.08 410s eta=1.4m
+[dungeon] step  12000/12000 train=0.1718 fit=0.1715 val=0.1722 best=0.1722@12000 lr=3.00e-05 gn=0.06 492s eta=0.0m
+[dungeon] DONE final_val=0.1722 final_fit=0.1715 best_val=0.1722@12000 blob=1,048,588B in 492s
+=== hardware ===
+[hardware] step   8000/12000 train=0.1833 fit=0.1867 val=0.1873 best=0.1873@8000 lr=4.21e-04 gn=0.07 328s eta=2.7m
+[hardware] step  10000/12000 train=0.1815 fit=0.1828 val=0.1840 best=0.1840@10000 lr=1.35e-04 gn=0.06 410s eta=1.4m
+[hardware] step  12000/12000 train=0.1789 fit=0.1810 val=0.1823 best=0.1823@12000 lr=3.00e-05 gn=0.06 492s eta=0.0m
+[hardware] DONE final_val=0.1823 final_fit=0.1810 best_val=0.1823@12000 blob=1,048,588B in 492s
+=== rustchain ===
+[rustchain] step   8000/12000 train=0.1934 fit=0.1886 val=0.1907 best=0.1907@8000 lr=4.21e-04 gn=0.08 328s eta=2.7m
+[rustchain] step  10000/12000 train=0.1840 fit=0.1858 val=0.1875 best=0.1875@10000 lr=1.35e-04 gn=0.06 410s eta=1.4m
+[rustchain] step  12000/12000 train=0.1827 fit=0.1833 val=0.1859 best=0.1859@12000 lr=3.00e-05 gn=0.07 491s eta=0.0m
+[rustchain] DONE final_val=0.1859 final_fit=0.1833 best_val=0.1859@12000 blob=1,048,588B in 491s
+=== lore ===
+[lore] step   8000/12000 train=0.1884 fit=0.1907 val=0.1925 best=0.1925@8000 lr=4.21e-04 gn=0.08 328s eta=2.7m
+[lore] step  10000/12000 train=0.1867 fit=0.1870 val=0.1901 best=0.1901@10000 lr=1.35e-04 gn=0.07 409s eta=1.4m
+[lore] step  12000/12000 train=0.1827 fit=0.1850 val=0.1878 best=0.1878@12000 lr=3.00e-05 gn=0.07 491s eta=0.0m
+[lore] DONE final_val=0.1878 final_fit=0.1850 best_val=0.1878@12000 blob=1,048,588B in 491s
+ALL EXPERTS DONE
