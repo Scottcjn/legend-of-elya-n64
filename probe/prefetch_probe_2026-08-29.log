@@ -1,0 +1,17 @@
+Loaded pf
+Opening TCP-server on 127.0.0.1:9124
+Vulkan Enabled: using paraLLEl-RDP
+PF BANK n=5 len=1048592 slots=2 linger=3 tok ngen=8
+[96m[unusual] [0mRSP DMA writing to RDRAM address 0x24c78 which is cached (missing cache invalidation?)
+	Cacheline was loaded at CPU PC: 0xffffffff8001ac50
+	RSP DMA started at RSP PC: 0x080
+
+PF STROLL    pf=0 stall=606 ms (worst 202 ms, 3 felt) swap=481 ms hits=0 miss=3 pfhit=0
+PF STROLL    pf=1 stall=0 ms (worst 0 ms, 0 felt) swap=481 ms hits=3 miss=0 pfhit=0
+PF SPRINT    pf=0 stall=606 ms (worst 202 ms, 3 felt) swap=447 ms hits=0 miss=3 pfhit=0
+PF SPRINT    pf=1 stall=597 ms (worst 199 ms, 3 felt) swap=378 ms hits=0 miss=0 pfhit=3
+PF BACKTRACK pf=0 stall=404 ms (worst 202 ms, 2 felt) swap=630 ms hits=3 miss=2 pfhit=0
+PF BACKTRACK pf=1 stall=398 ms (worst 199 ms, 2 felt) swap=630 ms hits=3 miss=0 pfhit=2
+PF TOUR      pf=0 stall=1010 ms (worst 202 ms, 5 felt) swap=630 ms hits=0 miss=5 pfhit=0
+PF TOUR      pf=1 stall=996 ms (worst 199 ms, 5 felt) swap=630 ms hits=0 miss=0 pfhit=5
+PF_DONE

@@ -855,3 +855,62 @@ unreserved write lands on the running game.
 **Untested:** everything with a card in it. T1-T5 are unevaluated. Whether the
 FPGA `cart_card_rd_cart()` path can be polled cooperatively rather than spun on
 is still unknown, and it is the arm most likely to decide the design.
+
+## F-R030: **proximity prefetch — it fully hides the LOAD, never the SWAP, and one case is unexplained**
+`make prefetchprobe` walks a five-room graph (one NPC per room, each answering
+out of one domain expert), talks in each room, and runs every walk TWICE — once
+without prefetch as the control — so every number is a delta against the same
+machine in the same boot. Cartridge only; no SD card needed. ares 147,
+`probe/prefetch_probe_2026-08-29.log`.
+
+```
+walk        prefetch   stall paid at dialogue-open   worst   swap    hits/miss/pfhit
+STROLL         off              606 ms               202 ms  481 ms   0 / 3 / 0
+STROLL         ON                 0 ms                 0 ms  481 ms   3 / 0 / 0
+SPRINT         off              606 ms               202 ms  447 ms   0 / 3 / 0
+SPRINT         ON               597 ms               199 ms  378 ms   0 / 0 / 3
+BACKTRACK      off              404 ms               202 ms  630 ms   3 / 2 / 0
+BACKTRACK      ON               398 ms               199 ms  630 ms   3 / 0 / 2
+TOUR           off             1010 ms               202 ms  630 ms   0 / 5 / 0
+TOUR           ON               996 ms               199 ms  630 ms   0 / 0 / 5
+```
+
+**1. Where it works, it works completely.** STROLL — enter, linger three tokens,
+then talk — goes from 606 ms of stall to **zero**. Three tokens is ~507 ms of
+lead against a ~200 ms load, and the expert is simply already there.
+
+**2. Refinement of F-R028: a cold 1 MB expert load is ~200 ms, not 401 ms.**
+Every acquire here costs 199-202 ms (~5.2 MB/s), which agrees with F-R027's
+160 KB rate of ~5.1 MB/s. F-R028's 401 ms was the FIRST load of the boot and
+carried one-time cost with it. So the lead required is **~1.2 tokens**, not 2.4.
+
+**3. Prefetch cannot touch the swap, and the swap is now the bigger number.**
+`swap` is identical in the control and prefetch arms of every walk (481/481,
+630/630) because it is CPU work — `sgai_init_ex()` re-permuting weights into the
+RSP's lane order — not a transfer. At 126-160 ms per NPC change it is now
+comparable to the load it sits behind. **Prefetching is a fix for I/O; only
+pre-permuted blobs (with the `layout_id` guard, see ADVENTURE_GAME_PLAN.md) fix
+the swap.**
+
+**4. Zero lead is unhelped, exactly as predicted.** SPRINT (enter and talk on
+the same frame) improves 606 -> 597 ms, i.e. not at all. A game that lets the
+player talk instantly must cover the load some other way — a cutscene, a door
+animation, an NPC turning to face you.
+
+**5. UNEXPLAINED, and stated as such.** TOUR and BACKTRACK still pay ~200 ms per
+room WITH prefetch on, and every acquire is reported as a `prefetch_hit` — the
+transfer was in flight but had not finished. STROLL's first three rooms are the
+SAME three rooms in the SAME order with the SAME linger, and they cost nothing.
+Slot count is not the cause: 2, 3 and 4 slots give byte-identical results
+(`probe/prefetch_probe_slots3_2026-08-29.log`). The leading suspicion is
+contention for the single PI DMA channel between the current room's
+`ec_request()` and the next room's `ec_prefetch()`, possibly via
+`ec_request()`'s `ec_dma_busy()` early return — but that is a hypothesis, not a
+finding, and the probe as written cannot separate them. **Next experiment:**
+per-call instrumentation of request/prefetch outcomes (started / declined-busy /
+declined-no-victim) and the in-flight expert id at each acquire.
+
+**Design consequences that already follow:** prefetch on room ENTRY, not on
+dialogue open; group NPCs so consecutive rooms share a domain where the story
+allows; and treat any place the player can talk with zero warning as a place
+that needs authored cover.
