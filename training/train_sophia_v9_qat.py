@@ -363,7 +363,7 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def build_v7_corpus(seed: int):
+def build_v7_corpus(seed: int, shard: str = None):
     """The corpus the SHIPPED blob was trained on (train_sophia_v7.py's three
     lists, same 2800/800/400 weighting). Parsed with ast so importing v7 -- which
     would start a 500k-step training run at import time -- is avoided.
@@ -382,6 +382,21 @@ def build_v7_corpus(seed: int):
             if nm in ("IDENTITY_PAIRS", "QA_PAIRS", "CORPUS_LINES"):
                 lists[nm] = ast.literal_eval(node.value)
     assert len(lists) == 3, lists.keys()
+
+    if shard:
+        # MoE: keep only this expert's slice of the QA lines.  CORPUS_LINES
+        # (prose with no question key) stay whole in every shard -- they are
+        # what teaches English, not facts, and starving an expert of them
+        # makes it fluent only in its own answers.  See moe_shards.py for why
+        # the match is substring-only.
+        import moe_shards
+        parts = moe_shards.split_lists(lists)
+        if shard not in parts:
+            raise SystemExit("unknown shard %r; have %s" % (shard, list(parts)))
+        lists = parts[shard]
+        print("[shard %s] %d IDENTITY + %d QA + %d prose lines"
+              % (shard, len(lists["IDENTITY_PAIRS"]), len(lists["QA_PAIRS"]),
+                 len(lists["CORPUS_LINES"])), flush=True)
 
     def build(sd):
         rng = random.Random(sd)
@@ -464,6 +479,9 @@ def main() -> None:
     p.add_argument("--corpus", default="v8", choices=["v8", "v7"],
                    help="v8 = the persona dataset in train_sophia_v8.py; "
                         "v7 = the corpus the shipped blob was trained on")
+    p.add_argument("--shard", default=None,
+                   help="MoE: train on one expert's slice of the v7 corpus "
+                        "(moe_shards.py). Requires --corpus v7.")
     p.add_argument("--tag", default=None)
     p.add_argument("--outdir", default="qat_out")
     args = p.parse_args()
@@ -475,8 +493,10 @@ def main() -> None:
                    ffn_mult=args.ffn_mult, ctx=args.ctx, quant=args.quant, tau=args.tau,
                    kv_quant=args.kv_quant, act_quant=args.act_quant)
 
+    if args.shard and args.corpus != "v7":
+        raise SystemExit("--shard requires --corpus v7")
     if args.corpus == "v7":
-        train_corpus, eval_corpus = build_v7_corpus(args.seed)
+        train_corpus, eval_corpus = build_v7_corpus(args.seed, args.shard)
     else:
         _ds, _pi, _order, train_corpus, eval_corpus = build_data(
             args.seed, args.train_repeats, args.eval_repeats, cfg.ctx)
