@@ -18,6 +18,10 @@
 #include <malloc.h>
 #include <math.h>
 #include "nano_gpt.h"
+#ifdef USE_MOE
+#include "src/expert_cache.h"
+#include "moe_router.h"
+#endif
 
 #ifdef USE_RPC_LLM
 #include "n64_llm_rpc.h"
@@ -625,6 +629,75 @@ static void draw_npc_sprite(const NPCProfile *npc, int f) {
     fillrect(sx,   sy+3, 2, 2, RGBA32(20, 20, 80, 255));
     fillrect(sx+5, sy+3, 2, 2, RGBA32(20, 20, 80, 255));
 }
+
+#ifdef USE_MOE
+/* ─── Streaming mixture-of-experts ───────────────────────────────────────────
+ *
+ * Instead of one 6.36M-param model shared by every NPC and differentiated by a
+ * persona prefix, each NPC answers out of its OWN 3.2M-param ternary expert,
+ * streamed from the cartridge as you walk. Measured (F-R028..F-R032):
+ *   expert blob   1,048,592 B, pre-permuted (SEP2) so the swap costs 37 ms
+ *                 rather than 161
+ *   load          ~200 ms cold, ~0 when prefetched with any real lead
+ *   speed         5.87 tok/s (4 layers) vs 3.03 for the dense 8-layer model
+ *   quality       28/28 trained-answer hits, 1.84 vs 2.56 invented words per
+ *                 free-running line -- specialisation beat raw parameter count
+ *
+ * Two 1 MB slots cost about what the single dense buffer did, and the walk
+ * toward an NPC is what pays for the load: near_npc going non-negative is the
+ * earliest the game knows which brain it needs. */
+#define MOE_MAGIC 0x53474D42u                        /* "SGMB" */
+typedef struct { uint32_t magic; uint16_t ver, n; uint32_t len, base; } MoeHdr;
+
+#ifndef MOE_SLOTS
+#define MOE_SLOTS 2
+#endif
+#define MOE_EXPERT_BYTES 1048592
+
+static uint8_t   moe_mem[MOE_SLOTS][MOE_EXPERT_BYTES] __attribute__((aligned(16)));
+static ExpertCache moe_ec;
+static int       moe_ready = 0;
+static uint16_t  moe_resident = 0xFFFF;   /* expert currently in G.ai */
+
+/* Which expert each NPC thinks with.  Sophia is the guide (identity), Aldric
+ * keeps the archive (lore), Brunhild works the forge (hardware). */
+static uint16_t npc_expert(int npc)
+{
+    switch (npc) {
+    case 0:  return MOE_E_IDENTITY;
+    case 1:  return MOE_E_LORE;
+    default: return MOE_E_HARDWARE;
+    }
+}
+
+/* Called every frame from the dungeon state: ask for the expert of whoever we
+ * are walking toward, long before A is pressed. */
+static void moe_prefetch_near(void)
+{
+    if (!moe_ready || G.near_npc < 0) return;
+    uint16_t want = npc_expert(G.near_npc);
+    if (want == moe_resident) return;
+    ec_prefetch(&moe_ec, want, moe_resident);
+}
+
+/* Called when a conversation starts.  Returns 0 if the expert could not be
+ * made resident, in which case the caller keeps whatever model it has rather
+ * than talking out of the wrong brain. */
+static int moe_select(int npc)
+{
+    if (!moe_ready) return 0;
+    uint16_t want = npc_expert(npc);
+    if (want == moe_resident) return 1;
+    const uint8_t *w = ec_acquire(&moe_ec, want);
+    if (!w) return 0;
+    sgai_init_ex(&G.ai, w, SGAI_ENGINE_RSP, NULL, 0);
+    if (!G.ai.is_loaded) return 0;
+    if (G.ai.kv != NULL && G.ai.kv != &G.kv) free(G.ai.kv);
+    G.ai.kv = &G.kv;
+    moe_resident = want;
+    return 1;
+}
+#endif /* USE_MOE */
 
 // ─── The player ──────────────────────────────────────────────────────────────
 //
@@ -2035,8 +2108,17 @@ static void handle_input(void) {
          * the earliest moment the game knows which expert it will need, and
          * F-R031 measured that a load hides completely given that warning. */
         G.near_npc = npc_within_reach();
+#ifdef USE_MOE
+        /* Ask for that NPC's brain the moment they are in range -- this is the
+         * lead time the load needs, and it is free because the player is
+         * walking, not waiting. */
+        moe_prefetch_near();
+#endif
         if (k.c[0].A && G.near_npc >= 0) {
             G.current_npc = G.near_npc;
+#ifdef USE_MOE
+            moe_select(G.near_npc);   /* keeps the old expert if this fails */
+#endif
             start_dialog();
         }
         if (k.c[0].B) {
@@ -2110,6 +2192,37 @@ static void game_init(void) {
     G.player_face = 1;
     G.near_npc    = -1;
 
+#ifdef USE_MOE
+    /* MoE: no single weight buffer.  The bank lives on the cartridge and
+     * two 1 MB slots hold whichever experts are live -- about what the
+     * dense buffer cost, for five brains instead of one. */
+    {
+        uint32_t rom = (uint32_t)dfs_rom_addr("/sophia_moe.bin");
+        static MoeHdr h __attribute__((aligned(16)));
+        if (rom) {
+            data_cache_hit_writeback_invalidate(&h, sizeof h);
+            dma_read(&h, rom, sizeof h);
+        }
+        uint8_t *slots[MOE_SLOTS];
+        for (int i = 0; i < MOE_SLOTS; i++) slots[i] = moe_mem[i];
+        if (rom && h.magic == MOE_MAGIC && h.n == MOE_N_EXPERTS
+            && h.len <= MOE_EXPERT_BYTES
+            && ec_init(&moe_ec, rom + h.base, h.len, (uint16_t)h.n,
+                       slots, MOE_SLOTS) == 0) {
+            moe_ready = 1;
+            /* Bring up Sophia's expert so the first conversation is warm. */
+            if (moe_select(0)) G.ai_ready = 1;
+        }
+        if (!G.ai_ready) {
+            /* Same honesty rule as the dense path: say WHY there is no
+             * model rather than silently falling back to canned lines. */
+            G.ai_load_failed_size = rom ? (int)h.len : -1;
+            G.ai_load_capacity    = MOE_EXPERT_BYTES;
+        }
+    }
+#endif
+
+#ifndef USE_MOE
     int fd = dfs_open("/sophia_weights.bin");
     if (fd >= 0) {
         /* Sized for the model that is actually in filesystem/: 8 layers,
@@ -2153,6 +2266,7 @@ static void game_init(void) {
             dfs_close(fd);
         }
     }
+#endif /* !USE_MOE */
 
 #if defined(COH_PROBE) || defined(BOOT_PROBE) || defined(GAME12_PROBE) || defined(RATE_PROBE)
 /* Two headless verification probes share this IS-Viewer preamble.

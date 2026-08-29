@@ -246,6 +246,27 @@ $(BUILD_DIR)/legend_of_elya_dual.elf: $(BUILD_DIR)/dual_probe.o $(BUILD_DIR)/nan
 legend_of_elya_dual.z64: N64_ROM_TITLE="Elya Dual"
 legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
 
+# --- THE GAME with streaming MoE: one expert per NPC (USE_MOE) ---
+#
+#   make moegame      each NPC answers out of its own 3.2M-param expert,
+#                     prefetched as the player walks toward them
+moegame: legend_of_elya_moe.z64
+
+$(BUILD_DIR)/legend_of_elya_moe.dfs: $(MOE_BANK) filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64
+	@rm -rf $(BUILD_DIR)/moegamefs && mkdir -p $(BUILD_DIR)/moegamefs
+	cp $(MOE_BANK) $(BUILD_DIR)/moegamefs/sophia_moe.bin
+	cp filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64 $(BUILD_DIR)/moegamefs/
+	$(N64_MKDFS) $@ $(BUILD_DIR)/moegamefs/
+
+$(BUILD_DIR)/legend_of_elya_moe.o: legend_of_elya.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -DRSP_MM_EPI_OVERLAP -DUSE_MOE -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_moe.elf: $(BUILD_DIR)/legend_of_elya_moe.o $(BUILD_DIR)/nano_gpt_ec.o $(BUILD_DIR)/matmul_rsp2_ec.o $(BUILD_DIR)/rsp_mm2_ovl.o $(BUILD_DIR)/expert_cache.o
+
+legend_of_elya_moe.z64: N64_ROM_TITLE="Legend of Elya MoE"
+legend_of_elya_moe.z64: $(BUILD_DIR)/legend_of_elya_moe.dfs
+
 # --- AUDIO-ONLY ROM: isolate the music from the model (audio_test.c) ---
 audiotest: legend_of_elya_audiotest.z64
 
