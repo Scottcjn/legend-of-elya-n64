@@ -16,6 +16,11 @@ attention — on a 93.75 MHz CPU from 1996.
 >   ([**the 61.8 tok/s in this video is withdrawn** — the counter on screen was
 >   broken and the real figure is 1.2 tok/s; see *The tok/s counter was wrong*
 >   below](#the-toks-counter-was-wrong-2026-08-13))
+> - **Which of these is real hardware:** the Full Demo was filmed from a real N64
+>   via EverDrive 64 (Feb 2026, 819K-param Q8 float32 scalar build). The First
+>   Coherent Output clip is an ares capture. The current 6.36M ternary blob and
+>   the RSP overlay have **not yet** been run on silicon — see *What has not been
+>   checked* below.
 >
 > **Download ROM**: [`legend_of_elya.z64`](legend_of_elya.z64) — ready to run in ares emulator or EverDrive 64
 
@@ -289,7 +294,9 @@ is a design for a model that does not exist yet.
 
 ### What has not been checked
 
-- **Nothing here has been run on real N64 silicon.** Every number in this section is
+- **Nothing here has been run on real N64 silicon.** (The Feb 2026 819K Q8 scalar
+  build was — see the video note at the top; this section is the current ternary
+  blob and RSP overlay.) Every number in this section is
   ares 147. ares's cycle model is the reason to trust it — independently calibrated
   in `docs/EMULATOR_ACCURACY.md` at 1.00 cycle per instruction, 40.25 cycles per
   D-cache miss and 268.62 cycles per uncached cartridge read, all of which are the
