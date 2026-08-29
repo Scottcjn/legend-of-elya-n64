@@ -555,3 +555,51 @@ it is a pre-existing property of the kernel's DMA-out, not of XCHK.
 
 **Needs the Expansion Pak** (4,386,136 B linked: two weight copies in .bss plus
 two KV caches on the heap). ROM is gitignored like every other `.z64`; build it.
+
+## F-R025: **four-model design review of "MoE across RSP and CPU" — and where it actually lands**
+Panel run 2026-08-28 on one grounded brief (measured numbers only, no
+speculation) fanned to four independent reviewers: **qwen3-max** and
+**qwen3-235b-a22b** (Alibaba Model Studio), **Grok CLI** (repo-grounded), and
+**Claude Fable 5** as synthesis. Two intended reviewers were UNAVAILABLE and are
+recorded as such rather than silently dropped: GPT-OSS 120B on the POWER8 (host
+unreachable, ~28 days), and Codex (`codex_models_manager` timed out refreshing
+its model list). `glm-5.3` returns 403 on this account and `glm-5.2` returns an
+EMPTY completion — an empty response is a FAILED call, not a clean result, so
+neither was counted.
+
+**Unanimous, and it kills the direct port.** Genesis MoE is cheap because
+cartridge ROM is memory-mapped: activating an expert is a pointer repoint,
+costing no RAM. The N64 cart is DMA'd, so activation costs *bandwidth* every
+time. `docs/STREAMING_MOE.md` already carries its own staleness warning (its
+capacity arithmetic is the v5 819K Q8 model, not the shipped 6.36M ternary
+one). Per-token DMA of a whole expert is rejected by all three.
+
+**Where they split, and it is the interesting part.** Both Qwen models named the
+float16 block scales as the root cause and want them *retrained away* (int8
+scales, or a per-row common exponent). That is a real option and it is the
+biggest theoretical win — but it produces a NEW model and therefore a new
+oracle, so it cannot be checked against the 176/176 record; it is a quality
+question, not a kernel question. Grok's answer is the one that respects the
+constraint the brief actually stated (bit-exact, verifiable in ares): the
+epilogue is **not transfer-bound**, so the fix is to *overlap* it, not shrink
+it — the ucode already flushes output in row batches (`P_ROWS_FLUSH`,
+`flush_out` in `rsp_mm2.S`), so the CPU can apply block scales to rows already
+DMA'd out while the RSP is still working the next rows. Wall time becomes
+`stage + max(disp, epi)` instead of `stage + disp + epi`. Same arithmetic, same
+oracle, no retrain.
+
+**Two corrections the panel produced about this repo, both verified here:**
+- `src/expert_cache.c` (async prefetch, LRU, D-cache coherency fix, commit
+  3d9a93c 2026-08-04) is **referenced by no built target** — it is in no
+  Makefile rule and no compiled source includes it. The streaming-MoE machinery
+  exists and has never been linked into a ROM.
+- The heterogeneous-format idea (ternary experts on the CPU, int8 on the RSP)
+  is already answered by the dual probe: after overlap the format delta lives
+  inside RSP-busy time, which is the part that gets hidden anyway, while int8
+  spends the RDRAM that forced its arm down to 4 layers. All-ternary experts,
+  RSP running the active FFN, is the shape that survives.
+
+**Decision.** Epilogue overlap first (bit-exact, measurable, gated by nothing).
+MoE and any format split stay blocked behind it, because both are gated on CPU
+work that today does not begin until the RSP has already finished. Not started;
+this finding is the review, not an implementation.
