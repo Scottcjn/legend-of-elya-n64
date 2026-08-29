@@ -251,9 +251,10 @@ legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
 #   make prefetchprobe    four scripted walks, control vs prefetch, cart only
 prefetchprobe: legend_of_elya_pfprobe.z64
 
-$(BUILD_DIR)/legend_of_elya_pfprobe.dfs: filesystem_moe/sophia_moe.bin
-	@mkdir -p $(BUILD_DIR)
-	$(N64_MKDFS) $@ filesystem_moe/
+$(BUILD_DIR)/legend_of_elya_pfprobe.dfs: $(MOE_BANK)
+	@rm -rf $(BUILD_DIR)/pffs && mkdir -p $(BUILD_DIR)/pffs
+	cp $(MOE_BANK) $(BUILD_DIR)/pffs/sophia_moe.bin
+	$(N64_MKDFS) $@ $(BUILD_DIR)/pffs/
 
 $(BUILD_DIR)/prefetch_probe.o: prefetch_probe.c
 	@mkdir -p $(BUILD_DIR)
@@ -270,9 +271,10 @@ legend_of_elya_pfprobe.z64: $(BUILD_DIR)/legend_of_elya_pfprobe.dfs
 #   make sdprobe EXTRA="-DSD_LBA=..." raw-sector arms need the file's LBA
 sdprobe: legend_of_elya_sdprobe.z64
 
-$(BUILD_DIR)/legend_of_elya_sdprobe.dfs: filesystem_moe/sophia_moe.bin filesystem/sophia_weights.bin
-	@mkdir -p $(BUILD_DIR)/sdfs
-	cp filesystem/sophia_weights.bin filesystem_moe/sophia_moe.bin $(BUILD_DIR)/sdfs/
+$(BUILD_DIR)/legend_of_elya_sdprobe.dfs: $(MOE_BANK) filesystem/sophia_weights.bin
+	@rm -rf $(BUILD_DIR)/sdfs && mkdir -p $(BUILD_DIR)/sdfs
+	cp filesystem/sophia_weights.bin $(BUILD_DIR)/sdfs/
+	cp $(MOE_BANK) $(BUILD_DIR)/sdfs/sophia_moe.bin
 	$(N64_MKDFS) $@ $(BUILD_DIR)/sdfs/
 
 $(BUILD_DIR)/sd_probe.o: sd_probe.c
@@ -289,9 +291,16 @@ legend_of_elya_sdprobe.z64: $(BUILD_DIR)/legend_of_elya_sdprobe.dfs
 #   make moeprobe    needs filesystem_moe/sophia_moe.bin (training/make_moe_bank.py)
 moeprobe: legend_of_elya_moeprobe.z64
 
-$(BUILD_DIR)/legend_of_elya_moeprobe.dfs: filesystem_moe/sophia_moe.bin
-	@mkdir -p $(BUILD_DIR)
-	$(N64_MKDFS) $@ filesystem_moe/
+# MOE_BANK selects which bank is baked in.  The DFS is built from a STAGING
+# directory holding exactly one bank, never from a directory that happens to
+# contain several: mkdfs packs whatever it finds, so keeping both banks in
+# filesystem_moe/ silently doubled the ROM to 10 MB and shipped a second,
+# unused 5 MB copy of the weights.
+MOE_BANK ?= banks/sophia_moe_sep.bin
+$(BUILD_DIR)/legend_of_elya_moeprobe.dfs: $(MOE_BANK)
+	@rm -rf $(BUILD_DIR)/moefs && mkdir -p $(BUILD_DIR)/moefs
+	cp $(MOE_BANK) $(BUILD_DIR)/moefs/sophia_moe.bin
+	$(N64_MKDFS) $@ $(BUILD_DIR)/moefs/
 
 $(BUILD_DIR)/moe_probe.o: moe_probe.c
 	@mkdir -p $(BUILD_DIR)
