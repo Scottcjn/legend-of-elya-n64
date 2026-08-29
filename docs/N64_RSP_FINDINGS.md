@@ -813,3 +813,45 @@ this is capacity-per-fact, not a bigger model. Routing is substring matching, so
 a prompt with no keyword lands in `identity` by construction — there is no
 learned router and no top-k mixing; this is Lock-On routing, one expert per
 prompt. 12,000 steps per expert, one seed, no sweep. Still ares, not silicon.
+
+## F-R029: `sd_probe.c` built and its fail-closed path verified; CRC verification priced
+`make sdprobe` implements the arms and the thresholds specified in
+`docs/SD_EXPERT_STREAMING.md`: BASE / BLOCK / FATFS / HIDE / STAGE over the same
+16 generated tokens of the same real model, every destination canary-filled and
+CRC-checked against the same expert read from cartridge ROM, thresholds printed
+by the ROM **before** any measurement so a later reader cannot quietly move
+them. It needs an EverDrive; this run is the emulator control.
+
+**ares 147, no flashcart** (`probe/sd_probe_absent_2026-08-29.log`):
+```
+SD THRESHOLDS T1=init<500ms T2=BLOCK>=2MB/s T3=FATFS>=70%BLOCK T4=HIDE<=BASE+10% T5=STAGE<=BASE+10%
+SD REF len=1048592 crc=9f6c3ab8 ok=1  CRCCOST cp0=33837082 (721 ms)
+SD CART cart_init=-1 type=-1 size=0 cp0=3627 (0 ms)
+SD ABSENT no development cartridge detected - no throughput measured, thresholds not evaluated
+```
+The point of this run is the last line. ares emulates no EverDrive, `cart_init()`
+returns -1, and the probe prints ABSENT and stops **without emitting a single
+throughput number** — because "no card" must never be indistinguishable from
+"infinitely fast card", which is the exact shape of every silent failure this
+repo has shipped. The cartridge reference expert still loaded and verified
+(`ok=1`, magic `SEQ`), so the byte-checking machinery is proven on the path that
+does work.
+
+**Unplanned measurement, and it matters: a bitwise CRC-32 over 1 MB costs
+33,837,082 cycles = 721 ms.** That is **1.8x the 401 ms it takes to LOAD the
+expert** (F-R028). Every design lane that proposed "CRC each expert on load"
+therefore proposed something costing nearly twice the thing it protects. The
+verification design has to change: a table-driven CRC-32 (~8x faster, ~90 ms) is
+the cheap fix, but the better one is to stop verifying bytes at load and instead
+verify BEHAVIOUR once per expert — the canary check plus a handful of tokens
+replayed against that expert's own golden, which is O(tokens) not O(bytes). Not
+yet designed; recorded here so the lane docs are read against it.
+
+**STAGE is guarded, not merely documented.** The arm refuses to run unless its
+cartridge-SDRAM window lies above libdragon's `__rom_end` and inside
+`cart_size`, because on an EverDrive that SDRAM *is* the ROM image and an
+unreserved write lands on the running game.
+
+**Untested:** everything with a card in it. T1-T5 are unevaluated. Whether the
+FPGA `cart_card_rd_cart()` path can be polled cooperatively rather than spun on
+is still unknown, and it is the arm most likely to decide the design.

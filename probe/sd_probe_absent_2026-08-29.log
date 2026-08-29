@@ -1,0 +1,8 @@
+Loaded sd
+Opening TCP-server on 127.0.0.1:9124
+Vulkan Enabled: using paraLLEl-RDP
+SD THRESHOLDS T1=init<500ms T2=BLOCK>=2MB/s T3=FATFS>=70%BLOCK T4=HIDE<=BASE+10% T5=STAGE<=BASE+10%
+SD REF len=1048592 crc=9f6c3ab8 ok=1  CRCCOST cp0=33837082 (721 ms)
+SD CART cart_init=-1 type=-1 size=0 cp0=3627 (0 ms)
+SD ABSENT no development cartridge detected - no throughput measured, thresholds not evaluated
+SD_DONE

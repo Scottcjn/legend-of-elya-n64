@@ -246,6 +246,26 @@ $(BUILD_DIR)/legend_of_elya_dual.elf: $(BUILD_DIR)/dual_probe.o $(BUILD_DIR)/nan
 legend_of_elya_dual.z64: N64_ROM_TITLE="Elya Dual"
 legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
 
+# --- SD ROM: can an expert stream off the EverDrive SD card? (sd_probe.c) ---
+#
+#   make sdprobe                     prints ABSENT without a flashcart
+#   make sdprobe EXTRA="-DSD_LBA=..." raw-sector arms need the file's LBA
+sdprobe: legend_of_elya_sdprobe.z64
+
+$(BUILD_DIR)/legend_of_elya_sdprobe.dfs: filesystem_moe/sophia_moe.bin filesystem/sophia_weights.bin
+	@mkdir -p $(BUILD_DIR)/sdfs
+	cp filesystem/sophia_weights.bin filesystem_moe/sophia_moe.bin $(BUILD_DIR)/sdfs/
+	$(N64_MKDFS) $@ $(BUILD_DIR)/sdfs/
+
+$(BUILD_DIR)/sd_probe.o: sd_probe.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -DRSP_MM_EPI_OVERLAP -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_sdprobe.elf: $(BUILD_DIR)/sd_probe.o $(BUILD_DIR)/nano_gpt_ec.o $(BUILD_DIR)/matmul_rsp2_ec.o $(BUILD_DIR)/rsp_mm2_ovl.o $(BUILD_DIR)/expert_cache.o
+
+legend_of_elya_sdprobe.z64: N64_ROM_TITLE="Elya SD"
+legend_of_elya_sdprobe.z64: $(BUILD_DIR)/legend_of_elya_sdprobe.dfs
+
 # --- MoE ROM: route -> stream -> swap -> generate (moe_probe.c) ---
 #
 #   make moeprobe    needs filesystem_moe/sophia_moe.bin (training/make_moe_bank.py)
