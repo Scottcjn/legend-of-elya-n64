@@ -17,6 +17,22 @@
  * header as SEAI; only the magic differs, so the loader picks the matmul
  * kernel off the magic alone.  See tools/quantize_n64.py for the format. */
 #define SGAI_MAGIC_SEQ0 0x53455130  // "SEQ0" — add the bit width to get the magic
+/* "SEP0" + bits: the SAME payload as SEQn but with every weight tensor ALREADY
+ * permuted into the RSP's lane order, so sgai_init_ex() can skip the 161 ms
+ * re-permutation it otherwise pays on every expert swap (F-R030/F-R031).
+ *
+ * It is a distinct MAGIC rather than a flag byte on purpose. For ternary the
+ * permutation is an 8x8 transpose and therefore an INVOLUTION: a pre-permuted
+ * blob permuted a second time returns to row-major, and the RSP then computes
+ * on the wrong layout while still emitting fluent text. A separate magic makes
+ * every wrong pairing fail to LOAD instead: an older ROM rejects an SEP blob
+ * outright, and the CPU engine (which needs row-major) rejects it too.
+ *
+ * A 4-byte big-endian FNV-1a fingerprint over the first 256 bytes of the first
+ * weight tensor is appended after the payload and re-checked at load, which
+ * catches the one case a magic cannot: a row-major blob wearing an SEP label. */
+#define SGAI_MAGIC_SEP0 0x53455030  // "SEP0"
+#define SGAI_FP_BYTES   256
 #define SGAI_MIN_BITS   2
 #define SGAI_MAX_BITS   8
 #define SGAI_N_LAYERS   8
@@ -203,6 +219,7 @@ typedef struct {
     float logits[SGAI_VOCAB];  // Output logits
     float em_scale;             // Embedding scale factor
     int w_bits;                 // Weight bit width: 8 for SEAI, 2..8 for SEQn
+    uint8_t pre_permuted;       // 1 = SEPn, weights already in RSP lane order
     uint32_t tokens[SGAI_CTX]; // Generated token sequence
     int seq_len;
     int is_loaded;

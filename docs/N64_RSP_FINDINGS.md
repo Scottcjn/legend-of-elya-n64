@@ -976,3 +976,71 @@ an open-bus DMA with the right duration, a leaked allocation that turns
 inference into a free no-op. None of them raised an error; each one made a
 measurement look *better* than reality. The linger timer that caught this one
 existed only because the previous finding was left honestly unexplained.
+
+## F-R032: **pre-permuted expert blobs — the 161 ms swap becomes 37 ms, and the involution is fenced off**
+F-R030/F-R031 established that the expert switch (`sgai_init_ex()` permuting a
+whole expert into the RSP's lane order) costs ~161 ms, is paid on every NPC
+change, and cannot be prefetched away because it is CPU work rather than
+transfer. Doing the permutation offline removes it.
+
+**The involution is real, and it was verified before anything was built.** The
+permutation is `new[i*8 + b] = old[b*G + i]` with G = 32 (int8) or 8 (ternary).
+For ternary that is an 8x8 transpose, so applying it twice is the identity —
+confirmed empirically over in_dim 256/1024 x out_dim 256/1024: double-permute is
+**byte-identical to the original**, while for int8 it is not. A pre-permuted
+ternary expert permuted once more is therefore row-major again, and the RSP
+computes on the wrong layout **while still emitting fluent text**, because the
+permutation moves bytes and never changes values.
+
+**Measured, ares 147, `make moeprobe`, same six prompts, same bank contents**
+(`probe/moe_prepermuted_2026-08-29.log`):
+```
+                         swap CP0        swap ms      per-turn saving
+row-major (SEQ2)          7,527,685       160.6 ms         --
+pre-permuted (SEP2)       1,751,380        37.4 ms       -77%  (123 ms)
+```
+All six expert answers are **character-identical** between the two banks
+(`I am Sophia Elya.` / `A blockchain for vintage` / `AltiVec SIMD on the G4 c` /
+`Ghosts and goblins guard` / `Ganondorf craves Power.` / `Epochs settle rewards
+ea`), and `make xchk` still reports **MATCH 16/16, MATCH 48/48, XCHK PASS**.
+The residual 37 ms is the cache writeback the RSP still needs
+(`rsp2_weights_ready`), which is real work and not removable this way.
+
+**The guard, and precisely what it does and does not catch.** A pre-permuted
+blob carries a distinct magic, `"SEP" + bits`, not a flag inside the existing
+12-byte header — every byte of which is spoken for, so a flag would have to
+steal bits from a live field and an older ROM would *misread* it rather than
+ignore it. Plus a 4-byte FNV-1a fingerprint over the first weight superblock,
+appended after the payload and re-checked at load (256 bytes, not a CRC over the
+megabyte: F-R029 measured that at 721 ms, nearly twice the load it protects).
+
+| combination | result |
+|---|---|
+| old ROM + SEQ blob | permutes at load, correct, unchanged |
+| old ROM + SEP blob | magic test fails, `is_loaded = 0` — **refuses**, no text |
+| new ROM + SEQ blob | permutes at load, correct (still the CPU-engine path) |
+| new ROM + SEP blob, RSP engine | permute skipped, fingerprint verified, 37 ms |
+| **SEP blob on the CPU engine** | **refused** — CPU kernels need row-major. Verified on the host: `host_eval` emits blanks, not fluent wrong text |
+| tool asked to permute an SEP blob | **refused** by `tools/permute_blob.py` |
+| bank mixing SEQ and SEP experts | **refused** by `training/make_moe_bank.py` |
+
+**What it does NOT catch, stated plainly:** a row-major blob deliberately
+relabelled `SEP` *with a fingerprint recomputed over its row-major bytes* would
+pass, because the fingerprint proves internal consistency, not the layout
+property itself. Closing that needs a canary — a known 256-byte ramp stored in
+its permuted form, which the loader permutes once and compares against the ramp,
+so the invariant is checked by exercising it. Designed, not built; the parallel
+design round proposed a canary whose superblock arithmetic was wrong for ternary
+(4 x 64-byte transposes, not one 256-byte one), which is a good argument for
+building it against a host test rather than from reasoning.
+
+**One SEP format exists.** The design round produced an alternative layout
+(canary at offset 12, body shifted +4) under the same magic. It was NOT adopted;
+two formats sharing one magic is precisely the silent-wrong-layout hazard this
+finding exists to prevent. The tree's format is: 12-byte SEQ header with SEP
+magic, unshifted body, 4-byte fingerprint trailer.
+
+**Not done:** the five shipped experts are permuted on demand
+(`tools/permute_blob.py in.seq2.bin out.sep2.bin`); the training pipeline does
+not yet emit SEP directly, and `training/make_moe_bank.py` records the layout
+but the ROM does not yet read that field. Still ares, not silicon.

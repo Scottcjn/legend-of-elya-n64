@@ -33,9 +33,19 @@ def build(blobs, names, out_path):
     assert len(blobs) == len(names)
     n = len(blobs)
     raw = [open(b, "rb").read() for b in blobs]
+    layouts = set()
     for r, b in zip(raw, blobs):
-        if r[:3] != b"SEQ":
-            raise SystemExit("%s is not a SEQn blob (magic %r)" % (b, r[:4]))
+        if r[:3] not in (b"SEQ", b"SEP"):
+            raise SystemExit("%s is not a SEQn/SEPn blob (magic %r)" % (b, r[:4]))
+        layouts.add(bytes(r[:3]))
+    if len(layouts) > 1:
+        # A mixed bank would load correctly for some experts and compute on the
+        # wrong layout for others -- and because the permutation only moves
+        # bytes, the wrong ones would still emit fluent text. Refuse.
+        raise SystemExit("MIXED LAYOUTS in one bank: %s. Every expert must be "
+                         "either all row-major (SEQ) or all pre-permuted (SEP)."
+                         % sorted(x.decode() for x in layouts))
+    layout = layouts.pop().decode()
     expert_len = max(len(r) for r in raw)
     expert_len = (expert_len + 7) & ~7          # PI DMA wants 8-byte alignment
     table = HDR_SIZE + n * NAME_LEN
@@ -62,7 +72,7 @@ def build(blobs, names, out_path):
 
     with open(out_path, "wb") as fh:
         fh.write(out)
-    return dict(path=out_path, total=len(out), n_experts=n,
+    return dict(path=out_path, total=len(out), n_experts=n, layout=layout,
                 expert_len=expert_len, base=base, names=names, sizes=sizes)
 
 def main():

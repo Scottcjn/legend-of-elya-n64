@@ -1113,17 +1113,24 @@ void sgai_init_ex(SGAIState *state, const void *rom_weights,
         const uint8_t *mb = (const uint8_t *)rom_weights;
         uint32_t magic_be = ((uint32_t)mb[0] << 24) | ((uint32_t)mb[1] << 16)
                           | ((uint32_t)mb[2] << 8)  |  (uint32_t)mb[3];
-        int bits = 0;
+        int bits = 0, pre_permuted = 0;
         if (magic_be == SGAI_MAGIC) {
             bits = 8;                                   /* shipped int8 blob */
         } else if ((magic_be & 0xFFFFFF00u) == (uint32_t)(SGAI_MAGIC_SEQ0 & 0xFFFFFF00u)) {
             int n = (int)(magic_be - SGAI_MAGIC_SEQ0);  /* ASCII digit - '0' */
             if (n >= SGAI_MIN_BITS && n <= SGAI_MAX_BITS)
                 bits = n;
+        } else if ((magic_be & 0xFFFFFF00u) == (uint32_t)(SGAI_MAGIC_SEP0 & 0xFFFFFF00u)) {
+            /* Pre-permuted: same payload, weights already in RSP lane order. */
+            int n = (int)(magic_be - SGAI_MAGIC_SEP0);
+            if (n >= SGAI_MIN_BITS && n <= SGAI_MAX_BITS)
+                bits = n;
+            pre_permuted = 1;
         }
         if (bits) {
             state->w_bits = bits;
             state->weights = hdr;
+            state->pre_permuted = (uint8_t)pre_permuted;
             state->is_loaded = 1;
             /* n_layers comes from the blob, not from the macro.  The two
              * members of the dual consensus are DIFFERENT depths -- an 8-layer
@@ -1162,8 +1169,41 @@ void sgai_init_ex(SGAIState *state, const void *rom_weights,
      * the kernel's 8-blocks-per-lane order.  This is a pure byte permutation
      * done once; after it the CPU kernels can no longer read these weights,
      * which is why an RSP build routes every matmul to the RSP. */
+    /* A pre-permuted blob is RSP-layout only.  The CPU kernels read row-major,
+     * so running one on the CPU engine would compute on the wrong layout and —
+     * because the permutation only moves bytes, never values — still produce
+     * fluent text.  Refuse instead. */
+    if (state->is_loaded && state->pre_permuted && state->engine != SGAI_ENGINE_RSP) {
+        debugf("sgai: SEP blob on the CPU engine; refusing (needs row-major)\n");
+        state->is_loaded = 0;
+    }
+    /* And verify the layout is really what the magic claims.  FNV-1a over the
+     * first weight superblock: bytes the permutation demonstrably moves, so a
+     * row-major blob wearing an SEP label (a double-permute, which the magic
+     * alone cannot catch because the tool would have rewritten it) fails here.
+     * 256 bytes, not the whole megabyte — a full CRC-32 over 1 MB costs 721 ms,
+     * nearly twice the load it would protect (F-R029). */
+    if (state->is_loaded && state->pre_permuted) {
+        const uint8_t *wbase = (const uint8_t *)(state->weights + 1)
+                             + (size_t)SGAI_VOCAB * SGAI_N_EMBED;
+        const size_t wb = (size_t)SGAI_LAYER_ELEMS * (size_t)state->w_bits / 8u;
+        const uint8_t *trailer = wbase
+            + (size_t)state->n_layers * (wb + SGAI_LAYER_SCALE_BYTES);
+        uint32_t want = ((uint32_t)trailer[0] << 24) | ((uint32_t)trailer[1] << 16)
+                      | ((uint32_t)trailer[2] << 8)  |  (uint32_t)trailer[3];
+        uint32_t h = 0x811C9DC5u;
+        for (int i = 0; i < SGAI_FP_BYTES; i++)
+            h = (h ^ wbase[i]) * 0x01000193u;
+        if (h != want) {
+            debugf("sgai: SEP fingerprint %08x != %08x; refusing\n",
+                   (unsigned)h, (unsigned)want);
+            state->is_loaded = 0;
+        }
+    }
+
     rsp_matmul_init();
-    if (state->is_loaded && state->engine == SGAI_ENGINE_RSP) {
+    if (state->is_loaded && !state->pre_permuted
+        && state->engine == SGAI_ENGINE_RSP) {
         static const int t_in[SGAI_N_TENSORS] = {
             SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED,
             SGAI_N_EMBED, SGAI_N_EMBED, SGAI_N_EMBED * 4
@@ -1189,6 +1229,15 @@ void sgai_init_ex(SGAIState *state, const void *rom_weights,
                 (unsigned long)(12u + (size_t)SGAI_VOCAB * SGAI_N_EMBED
                     + (size_t)state->n_layers * (wb + SGAI_LAYER_SCALE_BYTES)));
         }
+    } else if (state->is_loaded && state->pre_permuted
+               && state->engine == SGAI_ENGINE_RSP) {
+        /* Nothing to permute, but the RSP still reads these bytes by DMA, so
+         * the CPU's dirty cache lines must be written back exactly as the
+         * permuting path does. */
+        const size_t wb = (size_t)SGAI_LAYER_ELEMS * (size_t)state->w_bits / 8u;
+        rsp2_weights_ready((void *)(uintptr_t)state->weights,
+            (unsigned long)(12u + (size_t)SGAI_VOCAB * SGAI_N_EMBED
+                + (size_t)state->n_layers * (wb + SGAI_LAYER_SCALE_BYTES)));
     }
 #endif
 }
