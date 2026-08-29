@@ -322,15 +322,30 @@ The scalar 1.23 tok/s figure above is the **scalar CPU baseline** — the plain
 
 ### RSP-accelerated build (`make base-rsp`)
 
-`rsp_matmul.S` is hand-written RSP microcode that runs the matmul on the N64's
-8-lane vector unit: the CPU driver (`matmul_rsp_drv.c`) converts float32 activations
-to int16 fixed-point, DMAs tiles into the RSP's 4KB DMEM, and dispatches 8 output
-rows per call. `nano_gpt.c` uses it when built with `USE_RSP_MATMUL`
-(the `legend_of_elya_rsp.z64` target). **Measured 1.78× over the scalar baseline**
-on the shipped ternary blob under ares (2.19 vs 1.23 tok/s). The "projected 4-8×"
-that stood here was never a tok/s measurement: the 4.769× it came from is a ratio of
-CP0 cycle counts on the **int8** blob, which is not what ships. Still pending on real
+`rsp_mm2.S` is hand-written RSP microcode that runs every matmul on the N64's
+8-lane vector unit, with its CPU driver `matmul_rsp2.c` (`make base-rsp`,
+`make base-rsp-ovl`; `nano_gpt.c` routes to it under `USE_RSP_MATMUL`). Design,
+from `docs/N64_RSP_FINDINGS.md` F-R007: each lane accumulates a *different*
+32-weight quantization block, so there is **no horizontal reduction** at all;
+products go through `VMADH` into the RSP's 48-bit accumulator with no rounding;
+unpacking uses only `VAND`/`VADDC` (which touch `ACC_LO` alone, so the running
+sum survives); the ucode issues its own DMA in and out; int8 and ternary
+weights are handled natively, and the CPU applies the per-block float16 scale
+afterwards. The integer block sums are exact, and the ROM's output is
+**176/176 tokens identical to the numpy oracle** across three blobs, two weight
+formats and two prompts, plus 1,296 exact block sums in a standalone kernel
+harness (F-R018, F-R023) — no token excused as quantization noise.
+
+**Measured 1.78× over the scalar baseline** on the shipped ternary blob under
+ares (2.19 vs 1.23 tok/s). The "projected 4-8×" that stood here was never a
+tok/s measurement: the 4.79× it came from is a ratio of CP0 cycle counts on the
+**int8** blob (F-R017/F-R020), which is not what ships. Still pending on real
 hardware — benchmark reports welcome.
+
+The first-generation kernel, `rsp_matmul.S` + `matmul_rsp_drv.c` (int16
+`vmulf`/`vmacf` with an approximate `vaddc` lane collapse, 8 output rows per
+dispatch), is kept in the tree for the record but is **no longer linked** by
+any target.
 
 ### RPI engine (`rpi/`) — zero-multiply inference
 
@@ -350,7 +365,8 @@ a different quality/speed trade, not a transformer.
 |------|---------|
 | `nano_gpt.c` | Float32 GPT inference engine (MIPS R4300i) |
 | `nano_gpt.h` | Model struct definitions, KV cache, API |
-| `rsp_matmul.S` / `matmul_rsp_drv.c` | RSP vector-unit matmul microcode + CPU driver (`make base-rsp`) |
+| `rsp_mm2.S` / `matmul_rsp2.c` | RSP vector-unit matmul microcode + CPU driver, exact `VMADH` accumulate, int8 + ternary (`make base-rsp`) — see `docs/N64_RSP_FINDINGS.md` |
+| `rsp_matmul.S` / `matmul_rsp_drv.c` | First-generation RSP kernel (approximate `vmulf` reduction); kept for the record, no longer linked |
 | `rpi/` | RPI zero-multiply permutation inference engine + 868KB game model |
 | `multi_npc.c` | Expansion Pak multi-NPC mode (3 AI characters) |
 | `legend_of_elya.c` | Game: dungeon scene, sprites, dialog, music, HUD, D-pad keyboard |
@@ -459,7 +475,7 @@ The goal is to shrink, optimize, and package this into a **reusable SDK** that a
 - [ ] Fine-tune for specific game genres (RPG, adventure, puzzle)
 
 ### Phase 3: Performance Optimization
-- [x] **RSP microcode acceleration** — implemented (`rsp_matmul.S` + `matmul_rsp_drv.c`, `make base-rsp`): 8-lane int16 matmul on the RSP, 8 output rows per dispatch. Measured 1.78× over scalar VR4300 on the shipped ternary blob under ares (2.19 vs 1.23 tok/s); on-hardware tok/s still pending
+- [x] **RSP microcode acceleration** — implemented (`rsp_mm2.S` + `matmul_rsp2.c`, `make base-rsp`): 8-lane matmul on the RSP, one quantization block per lane, exact `VMADH` accumulate, RSP-side DMA, int8 and ternary. 176/176 tokens oracle-exact under ares. Measured 1.78× over scalar VR4300 on the shipped ternary blob (2.19 vs 1.23 tok/s); 4.79× on CP0 cycles for the int8 blob (F-R017); on-hardware tok/s still pending (`docs/N64_RSP_FINDINGS.md`)
 - [ ] **Q4 quantization** — halve weight size to ~230KB, fit more model or more NPCs
 - [ ] **Tiled matmul** — process weights in cache-friendly blocks to reduce RDRAM stalls
 - [ ] **Speculative generation** — pre-generate during idle frames (exploration, cutscenes)
