@@ -862,6 +862,13 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
         int best = 32;
         for (int i = 33; i <= 126; i++)
             if (logits[i] > logits[best]) best = i;
+#ifdef SGAI_NEWLINE_STOP
+        /* C028 experiment: the trainer joins every corpus line with '\n', so
+         * the model was taught to predict newline as end-of-answer; the
+         * printable band above never lets it win.  Let it compete.  The
+         * caller treats a returned 10 as "the answer is complete". */
+        if (logits[10] > logits[best]) best = 10;
+#endif
         return (uint8_t)best;
     }
 

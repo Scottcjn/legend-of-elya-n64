@@ -593,3 +593,31 @@ the letter.** Greedy only — the game's temperature_q8=64 path is not measured
 here. Host build, not ROM: ROM==host token identity was established for the
 probe prompts in N64_RSP_FINDINGS F-R015/F-R018 and G12 (`compare_rom_host.py`),
 not re-run for these 32.
+
+## C028: **THE MODEL ALREADY KNOWS HOW TO STOP — newline is a trained EOS the band never let win**
+`train_sophia_v7.py` builds the corpus as `"\n".join(all_lines) + "\n"`
+(line 463) and `train_mix.py` the same (line 424): every answer the model ever
+saw was followed by byte 10. `sample_logits()`'s greedy path takes argmax over
+32..126 only, so the model's own end-of-answer prediction can never be
+emitted, and generation runs on into next-line garble (C027: 2.56 invented
+words per 64-token line past the first sentence).
+
+Experiment: `-DSGAI_NEWLINE_STOP` (guarded, default off, ROM bytes unchanged)
+lets `logits[10]` compete in the greedy argmax. Same `host_eval` build and
+flags as C027, same 32 prompts, 64 new tokens, shipped v7 ternary blob; raw
+bytes in `probe/host_eval_32_newline_stop_2026-08-28.bin` (32 x 64 bytes):
+```
+32/32 answers self-terminated with '\n' inside 64 tokens
+32/32 of those are a complete sentence ending in '.' with 0 invented words
+stop position min/median/max = 20/27/35 characters
+```
+Every answer is byte-identical to C027's game-cut text plus its period — the
+model was producing the right sentence and the right stop all along; the band
+threw the stop away.
+
+Consequences: (1) the "no mask needed" claim is now a measured property of the
+model, not of the game's cut rule; (2) an answer is ~27 tokens instead of the
+cap, so at 2.19 tok/s a reply completes in ~12 s instead of ~30 — the cheapest
+speedup in this repo; (3) this is the same lesson as the NES port (let the
+model finish its sentence). Greedy only; the temperature path still masks 10
+and is untouched. Not yet wired into the game loop or booted in ares.
