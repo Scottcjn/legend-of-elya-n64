@@ -171,6 +171,10 @@ typedef struct {
     // Player position (for room edge detection)
     int      player_x;
     int      player_y;
+    int      player_face;       /* -1 left, +1 right                        */
+    int      player_step;       /* animation phase while walking            */
+    int      player_moving;     /* 1 if the D-pad moved us this frame       */
+    int      near_npc;          /* NPC index within talking range, or -1    */
     // Forge sparks
     Spark    sparks[MAX_SPARKS];
     // AI
@@ -382,48 +386,66 @@ static const uint8_t DUNGEON_DUR[] = {
     2, 2, 1, 1,   // C5(held) A4(held) rest rest
 };
 
-static void music_update(void) {
+/* ─── Music ──────────────────────────────────────────────────────────────
+ *
+ * This used to be a hand-rolled square wave written straight into the audio
+ * buffer, bypassing libdragon's mixer: one channel, one waveform, a fixed note
+ * table. It sounded like a beeper because it was one.
+ *
+ * Now it is three composed room themes (audio/compose.py -- our own notes, so
+ * there is no licence question) rendered through the pipeline feverdream's
+ * audio lane already proved on console: MIDI -> fluidsynth -> 22.05 kHz mono
+ * s16 -> audioconv64 VADPCM, played by the RSP mixer at a measured ~30k CPU
+ * cycles per vblank. The track follows the room. */
+
+static wav64_t g_song;
+static int     g_song_room = -1;   /* which room's track is loaded, or -1 */
+
+static const char *const ROOM_MUSIC[ROOM_COUNT] = {
+    "rom:/dungeon.wav64",
+    "rom:/library.wav64",
+    "rom:/forge.wav64",
+};
+
+static void music_set_room(RoomID room)
+{
+    if ((int)room == g_song_room) return;
+    /* Close before reopening the same wav64_t -- reopening an open one leaves
+     * the mixer referencing a half-torn-down sample and crashes on the room
+     * change (seen in the audio-only test). */
+    if (g_song_room >= 0) { mixer_ch_stop(0); wav64_close(&g_song); }
+    /* wav64_open() returns void and asserts on a missing file, so the DFS
+     * dependency in the Makefile is the real guard -- keep them in step. */
+    wav64_open(&g_song, ROOM_MUSIC[room]);
+    wav64_set_loop(&g_song, true);
+    wav64_play(&g_song, 0);
+    mixer_ch_set_vol(0, 0.55f, 0.55f);
+    g_song_room = (int)room;
+}
+
+/* Just the mixer poll -- no room logic, no file I/O.  This is what runs from
+ * inside a token via sgai_tick, so it must be cheap and re-entrant-safe. */
+static void audio_service(void) {
+    if (g_song_room < 0) return;
     if (!audio_can_write()) return;
-
     short *buf = audio_write_begin();
-    int nsamples = audio_get_buffer_length();
-
-    for (int i = 0; i < nsamples; i++) {
-        int note_samples = (int)DUNGEON_DUR[G.music_note_idx] * MUSIC_EIGHTH;
-        uint16_t freq    = DUNGEON_FREQ[G.music_note_idx];
-
-        int16_t sample = 0;
-        if (freq > 0) {
-            int period = MUSIC_FREQ / (int)freq;
-            if (period > 0) {
-                // Square wave
-                int16_t amp = 5000;
-                // Simple attack/decay envelope to avoid clicks
-                if (G.music_sample_pos < MUSIC_ATTACK)
-                    amp = (int16_t)((int32_t)amp * G.music_sample_pos / MUSIC_ATTACK);
-                else if (G.music_sample_pos > MUSIC_DECAY_START)
-                    amp = (int16_t)((int32_t)amp * (note_samples - G.music_sample_pos)
-                                    / (note_samples - MUSIC_DECAY_START));
-                sample = (G.music_phase < period / 2) ? amp : -amp;
-                G.music_phase = (G.music_phase + 1) % period;
-            }
-        } else {
-            G.music_phase = 0;
-        }
-
-        buf[i * 2]     = sample;   // left
-        buf[i * 2 + 1] = sample;   // right
-
-        // Advance note timer
-        if (++G.music_sample_pos >= note_samples) {
-            G.music_sample_pos = 0;
-            G.music_phase      = 0;
-            G.music_note_idx   = (G.music_note_idx + 1) % DUNGEON_LEN;
-        }
-    }
-
+    mixer_poll(buf, audio_get_buffer_length());
     audio_write_end();
 }
+
+static void music_update(void) {
+    /* Follow the room, then hand the mixer whatever buffer time is free.
+     * mixer_poll() only does work when a buffer actually needs filling, so
+     * calling it every frame is the documented pattern, not a busy loop. */
+    if (G.state != STATE_ANNIVERSARY && G.state != STATE_TITLE)
+        music_set_room(G.current_room);
+    if (g_song_room < 0) return;
+    if (!audio_can_write()) return;
+    short *buf = audio_write_begin();
+    mixer_poll(buf, audio_get_buffer_length());
+    audio_write_end();
+}
+
 
 // ─── rdpq fill helper ────────────────────────────────────────────────────────
 
@@ -604,6 +626,75 @@ static void draw_npc_sprite(const NPCProfile *npc, int f) {
     fillrect(sx+5, sy+3, 2, 2, RGBA32(20, 20, 80, 255));
 }
 
+// ─── The player ──────────────────────────────────────────────────────────────
+//
+// Until now `player_x`/`player_y` were assigned once at init and never read:
+// the game was a room viewer with talking NPCs. The player walks now, and that
+// matters for more than feel — WALKING TOWARD AN NPC IS THE LEAD TIME the
+// streaming design needs. F-R031 measured a 1 MB expert load at ~200 ms and
+// showed prefetch hides it completely given a few tokens of warning, and
+// nothing at all given none. Proximity is where that warning comes from, so
+// `near_npc` is computed every frame and is the natural hook for ec_prefetch()
+// once the MoE bank replaces the single shared model.
+
+#define PLAYER_SPEED   2
+#define PLAYER_MIN_X   8
+#define PLAYER_MAX_X   304
+#define PLAYER_MIN_Y   96      /* top of the floor band (floor starts y=100) */
+#define PLAYER_MAX_Y   140     /* floor line is at y=148                     */
+#define TALK_RANGE_X   34
+#define TALK_RANGE_Y   40
+
+static void draw_player_sprite(int f)
+{
+    int px = G.player_x, py = G.player_y;
+    /* Bob only while walking, so standing still reads as standing still. */
+    int step = G.player_moving ? ((G.player_step >> 3) & 1) : 0;
+    int bob  = G.player_moving ? ((G.player_step >> 2) & 1) : 0;
+    (void)f;
+
+    /* Shadow first, so the sprite sits ON the floor instead of floating. */
+    fillrect(px - 7, py + 40, 16, 3, RGBA32(20, 15, 30, 255));
+
+    /* Legs — alternate while walking */
+    if (step) {
+        fillrect(px - 5, py + 28 - bob, 5, 13, RGBA32(40, 40, 90, 255));
+        fillrect(px + 3, py + 30 - bob, 5, 11, RGBA32(40, 40, 90, 255));
+    } else {
+        fillrect(px - 5, py + 30 - bob, 5, 11, RGBA32(40, 40, 90, 255));
+        fillrect(px + 3, py + 28 - bob, 5, 13, RGBA32(40, 40, 90, 255));
+    }
+    /* Tunic */
+    fillrect(px - 6, py + 14 - bob, 15, 18, RGBA32(50, 110, 60, 255));
+    /* Belt */
+    fillrect(px - 6, py + 27 - bob, 15, 3, RGBA32(90, 70, 30, 255));
+    /* Torso */
+    fillrect(px - 5, py + 9 - bob, 13, 8, RGBA32(60, 130, 70, 255));
+    /* Head */
+    fillrect(px - 4, py - bob, 11, 11, RGBA32(220, 180, 140, 255));
+    /* Hair, swept the way we face */
+    fillrect(px - 5, py - 2 - bob, 13, 4, RGBA32(150, 110, 40, 255));
+    if (G.player_face > 0) fillrect(px + 7, py - 1 - bob, 3, 6, RGBA32(150, 110, 40, 255));
+    else                   fillrect(px - 7, py - 1 - bob, 3, 6, RGBA32(150, 110, 40, 255));
+    /* Eyes — only the leading one shows, which is what sells the facing */
+    if (G.player_face > 0) fillrect(px + 3, py + 4 - bob, 2, 3, RGBA32(20, 20, 60, 255));
+    else                   fillrect(px,     py + 4 - bob, 2, 3, RGBA32(20, 20, 60, 255));
+}
+
+/* Which NPC is close enough to talk to, or -1. */
+static int npc_within_reach(void)
+{
+    for (int i = 0; i < NPC_COUNT; i++) {
+        if (NPC_PROFILES[i].room != G.current_room) continue;
+        int dx = NPC_PROFILES[i].sprite_x - G.player_x;
+        int dy = NPC_PROFILES[i].sprite_y_base - G.player_y;
+        if (dx < 0) dx = -dx;
+        if (dy < 0) dy = -dy;
+        if (dx <= TALK_RANGE_X && dy <= TALK_RANGE_Y) return i;
+    }
+    return -1;
+}
+
 // ─── Room-specific scene elements ────────────────────────────────────────────
 
 static void draw_room_walls_floor(RoomID room) {
@@ -779,6 +870,10 @@ static void scene_dungeon(void) {
             draw_npc_sprite(&NPC_PROFILES[npc_idx], f);
         }
     }
+
+    /* The player draws after the room and the NPC, so he stands in front of
+     * both rather than being painted over by the props. */
+    draw_player_sprite(f);
 
     // Sophia-specific extras: shield + sword (only in dungeon)
     if (room == ROOM_DUNGEON) {
@@ -1275,11 +1370,15 @@ static void draw_text(surface_t *disp) {
         // Room name in HUD (right of magic bar)
         graphics_draw_text(disp, 60, 3, ROOM_NAMES[G.current_room]);
         graphics_draw_text(disp, 186, 3,  "MP");   // magic bar label
-        // Context-sensitive help text
-        if (G.current_room == ROOM_DUNGEON)
-            graphics_draw_text(disp,  10, 220, "[A]Talk [B]Keyboard  (auto-attack)");
+        /* Context-sensitive help.  The line now reflects what the controls
+         * actually do: you WALK, and A only talks when someone is in reach.
+         * It also names START as the keyboard's send key -- that was already
+         * implemented and simply undiscoverable, which is not the same thing
+         * as missing. */
+        if (G.near_npc >= 0)
+            graphics_draw_text(disp, 10, 220, "[A]Talk  [B]Type (START sends)");
         else
-            graphics_draw_text(disp, 10, 220, "[A]Talk [B]Keyboard [L/R]Move");
+            graphics_draw_text(disp, 10, 220, "[D-pad]Walk  [B]Type  edges=doors");
         break;
 
     case STATE_DIALOG_SELECT: {
@@ -1884,28 +1983,70 @@ static void handle_input(void) {
     case STATE_TITLE:
         if (k.c[0].start || k.c[0].A) G.state = STATE_DUNGEON;
         break;
-    case STATE_DUNGEON:
-        if (k.c[0].A) start_dialog();
+    case STATE_DUNGEON: {
+        /* ── Walking ──────────────────────────────────────────────────────
+         * The D-pad moves the player now. It used to teleport between rooms
+         * on left/right, which is why there was nothing to walk WITH. Rooms
+         * change when you walk off the edge instead, so the doorway is a
+         * place you travel to rather than a button you press — and the walk
+         * toward it is the lead time the expert prefetch needs. */
+        int dx = 0, dy = 0;
+        if (k.c[0].left)  dx -= PLAYER_SPEED;
+        if (k.c[0].right) dx += PLAYER_SPEED;
+        if (k.c[0].up)    dy -= PLAYER_SPEED;
+        if (k.c[0].down)  dy += PLAYER_SPEED;
+        /* Analog stick too, for anyone who reaches for it first. */
+        if (k.c[0].x >  20) dx += PLAYER_SPEED;
+        if (k.c[0].x < -20) dx -= PLAYER_SPEED;
+        if (k.c[0].y >  20) dy -= PLAYER_SPEED;
+        if (k.c[0].y < -20) dy += PLAYER_SPEED;
+
+        G.player_moving = (dx != 0 || dy != 0);
+        if (dx > 0) G.player_face =  1;
+        if (dx < 0) G.player_face = -1;
+        if (G.player_moving) G.player_step++;
+
+        G.player_x += dx;
+        G.player_y += dy;
+        if (G.player_y < PLAYER_MIN_Y) G.player_y = PLAYER_MIN_Y;
+        if (G.player_y > PLAYER_MAX_Y) G.player_y = PLAYER_MAX_Y;
+
+        /* ── Doorways ─────────────────────────────────────────────────────
+         * Walking past either edge leaves the room, and you arrive on the
+         * opposite side of the next one so the movement reads as continuous.
+         * L/R still work as a shortcut for anyone who prefers them. */
+        const RoomExits *ex = &ROOM_MAP[G.current_room];
+        if (G.player_x <= PLAYER_MIN_X) {
+            G.player_x = PLAYER_MIN_X;
+            if (ex->west >= 0) { G.player_x = PLAYER_MAX_X - 4;
+                                 begin_room_transition((RoomID)ex->west); }
+        }
+        if (G.player_x >= PLAYER_MAX_X) {
+            G.player_x = PLAYER_MAX_X;
+            if (ex->east >= 0) { G.player_x = PLAYER_MIN_X + 4;
+                                 begin_room_transition((RoomID)ex->east); }
+        }
+        if (k.c[0].L && ex->west >= 0) begin_room_transition((RoomID)ex->west);
+        if (k.c[0].R && ex->east >= 0) begin_room_transition((RoomID)ex->east);
+
+        /* ── Talking ──────────────────────────────────────────────────────
+         * A only talks when someone is actually in front of you. This is the
+         * hook the streaming MoE wants: `near_npc` becoming non-negative is
+         * the earliest moment the game knows which expert it will need, and
+         * F-R031 measured that a load hides completely given that warning. */
+        G.near_npc = npc_within_reach();
+        if (k.c[0].A && G.near_npc >= 0) {
+            G.current_npc = G.near_npc;
+            start_dialog();
+        }
         if (k.c[0].B) {
             G.state = STATE_KEYBOARD;
             G.kb_row = 0; G.kb_col = 0;
             G.kb_len = 0; G.kb_debounce = 10;
             memset(G.kb_input, 0, sizeof(G.kb_input));
         }
-        /* Room transitions via L/R shoulder buttons */
-        {
-            const RoomExits *ex = &ROOM_MAP[G.current_room];
-            if (k.c[0].L && ex->west >= 0)
-                begin_room_transition((RoomID)ex->west);
-            if (k.c[0].R && ex->east >= 0)
-                begin_room_transition((RoomID)ex->east);
-            /* D-pad left/right also transition rooms (natural movement) */
-            if (k.c[0].left && ex->west >= 0)
-                begin_room_transition((RoomID)ex->west);
-            if (k.c[0].right && ex->east >= 0)
-                begin_room_transition((RoomID)ex->east);
-        }
         break;
+    }
     case STATE_DIALOG_SELECT:
         /* D-pad up/down to navigate options */
         if (k.c[0].up)
@@ -1964,8 +2105,10 @@ static void game_init(void) {
     G.current_room = ROOM_DUNGEON;
     G.current_npc  = 0;  // Sophia
     G.dialog_select_idx = 0;
-    G.player_x = 160;
-    G.player_y = 120;
+    G.player_x    = 120;
+    G.player_y    = 108;
+    G.player_face = 1;
+    G.near_npc    = -1;
 
     int fd = dfs_open("/sophia_weights.bin");
     if (fd >= 0) {
@@ -2355,7 +2498,17 @@ int main(void) {
     register_VI_handler(vbl_counter);
     dfs_init(DFS_DEFAULT_LOCATION);
     rdpq_init();
-    audio_init(MUSIC_FREQ, 4);   // 22kHz, 4 buffers for smooth square-wave
+    audio_init(22050, 4);
+    mixer_init(2);               /* ch0 music; ch1 reserved for effects */
+    /* Feeding the mixer from inside inference is tempting -- a token is ~330 ms
+     * and the buffers hold only ~66 ms -- but mixer_poll() is itself an rspq
+     * user, and calling it in the middle of the matmul's dispatch sequence
+     * interleaves two producers on one command queue.  Off by default until
+     * that is measured rather than assumed; -DAUDIO_TICK_IN_INFERENCE turns it
+     * back on for the experiment. */
+#ifdef AUDIO_TICK_IN_INFERENCE
+    sgai_tick = audio_service;
+#endif
 
     game_init();
 

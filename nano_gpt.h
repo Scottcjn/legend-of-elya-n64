@@ -254,6 +254,11 @@ uint8_t sgai_dual_next_token(SGAIState *a, SGAIState *b, int shift,
 extern float sgai_dual_logits[SGAI_VOCAB];
 /* 1 = the no-overlap control: b's matmul is waited on before a's starts. */
 extern int sgai_dual_serial;
+/* Called once per transformer layer during sgai_next_token(), so a caller can
+ * service something time-critical (the audio mixer) inside a 330 ms token.
+ * NULL by default. */
+extern void (*sgai_tick)(void);
+
 void sgai_reset(SGAIState *state);
 uint8_t sgai_next_token(SGAIState *state, uint8_t input_token, uint32_t temperature_q8);
 void sgai_generate(SGAIState *state, const uint8_t *prompt, int prompt_len,

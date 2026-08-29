@@ -38,6 +38,15 @@
 #define SGAI_NEWLINE_STOP 1
 #endif
 
+/* Serviced between transformer layers.  A generated token is ~330 ms of solid
+ * CPU (3.03 tok/s), while libdragon's four audio buffers hold ~66 ms — so the
+ * mixer starves five times over during every single token and the music breaks
+ * up.  There is nowhere else to put this: the token is one atomic call from the
+ * game's point of view, and the machine is ~98.5% inference while generating.
+ * A hook called once per layer lands every ~41 ms, inside the buffer window.
+ * NULL by default, so host builds and probes are unaffected. */
+void (*sgai_tick)(void) = 0;
+
 /* Byte-swap helpers for LE weight file on BE N64 */
 static inline uint16_t swap16(uint16_t x) { return (x >> 8) | (x << 8); }
 static inline uint32_t swap32(uint32_t x) {
@@ -1282,6 +1291,7 @@ uint8_t sgai_next_token(SGAIState *state, uint8_t input_token,
     if (state->is_loaded && state->weights != NULL) {
         SGAILayerPtrs lp;
         for (int l = 0; l < state->n_layers; l++) {
+            if (sgai_tick) sgai_tick();   /* keep the audio mixer fed */
             sgai_layer_ptrs(state, l, &lp);
             attention_layer(state, &lp, l, pos);
         }

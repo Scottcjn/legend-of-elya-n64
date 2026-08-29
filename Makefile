@@ -162,7 +162,7 @@ all: legend_of_elya.z64 legend_of_elya_rsp.z64 legend_of_elya_mining.z64 legend_
 # --- Base ROM (CPU LLM, standalone, no Pico) ---
 base: legend_of_elya.z64
 
-$(BUILD_DIR)/legend_of_elya.dfs: filesystem/sophia_weights.bin
+$(BUILD_DIR)/legend_of_elya.dfs: filesystem/sophia_weights.bin filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64
 
 $(BUILD_DIR)/legend_of_elya.elf: $(BUILD_DIR)/legend_of_elya.o $(BUILD_DIR)/nano_gpt.o
 
@@ -172,7 +172,7 @@ legend_of_elya.z64: $(BUILD_DIR)/legend_of_elya.dfs
 # --- RSP-accelerated ROM (CPU+RSP LLM, standalone, no Pico) ---
 base-rsp: legend_of_elya_rsp.z64
 
-$(BUILD_DIR)/legend_of_elya_rsp.dfs: filesystem/sophia_weights.bin
+$(BUILD_DIR)/legend_of_elya_rsp.dfs: filesystem/sophia_weights.bin filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64
 
 $(BUILD_DIR)/nano_gpt_rsp.o: nano_gpt.c
 	@mkdir -p $(BUILD_DIR)
@@ -197,7 +197,7 @@ legend_of_elya_rsp.z64: $(BUILD_DIR)/legend_of_elya_rsp.dfs
 # installs.  base-rsp renders nothing after sgai_init(); this one does.
 base-rsp-ovl: legend_of_elya_rsp_ovl.z64
 
-$(BUILD_DIR)/legend_of_elya_rsp_ovl.dfs: filesystem/sophia_weights.bin
+$(BUILD_DIR)/legend_of_elya_rsp_ovl.dfs: filesystem/sophia_weights.bin filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64
 
 $(BUILD_DIR)/nano_gpt_rsp_ovl.o: nano_gpt.c
 	@mkdir -p $(BUILD_DIR)
@@ -245,6 +245,23 @@ $(BUILD_DIR)/legend_of_elya_dual.elf: $(BUILD_DIR)/dual_probe.o $(BUILD_DIR)/nan
 
 legend_of_elya_dual.z64: N64_ROM_TITLE="Elya Dual"
 legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
+
+# --- AUDIO-ONLY ROM: isolate the music from the model (audio_test.c) ---
+audiotest: legend_of_elya_audiotest.z64
+
+$(BUILD_DIR)/legend_of_elya_audiotest.dfs: filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64
+	@rm -rf $(BUILD_DIR)/aufs && mkdir -p $(BUILD_DIR)/aufs
+	cp filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64 $(BUILD_DIR)/aufs/
+	$(N64_MKDFS) $@ $(BUILD_DIR)/aufs/
+
+$(BUILD_DIR)/audio_test.o: audio_test.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_audiotest.elf: $(BUILD_DIR)/audio_test.o
+
+legend_of_elya_audiotest.z64: N64_ROM_TITLE="Elya Audio"
+legend_of_elya_audiotest.z64: $(BUILD_DIR)/legend_of_elya_audiotest.dfs
 
 # --- PREFETCH ROM: does proximity prefetch hide the expert load? (prefetch_probe.c) ---
 #
