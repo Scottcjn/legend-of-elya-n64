@@ -246,6 +246,34 @@ $(BUILD_DIR)/legend_of_elya_dual.elf: $(BUILD_DIR)/dual_probe.o $(BUILD_DIR)/nan
 legend_of_elya_dual.z64: N64_ROM_TITLE="Elya Dual"
 legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
 
+# --- EC ROM: does an expert-sized PI DMA hide behind a token? (ec_probe.c) ---
+#
+#   make ecprobe     BASE / BLOCK / HIDE arms over the same 16 real tokens
+ecprobe: legend_of_elya_ecprobe.z64
+
+$(BUILD_DIR)/legend_of_elya_ecprobe.dfs: filesystem/sophia_weights.bin
+
+$(BUILD_DIR)/ec_probe.o: ec_probe.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -DRSP_MM_EPI_OVERLAP -o $@ $<
+
+$(BUILD_DIR)/expert_cache.o: src/expert_cache.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/nano_gpt_ec.o: nano_gpt.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -o $@ $<
+
+$(BUILD_DIR)/matmul_rsp2_ec.o: matmul_rsp2.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DRSP_MM_OVERLAY -DRSP_MM_EPI_OVERLAP -DRSP_PHASE_TIMING -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_ecprobe.elf: $(BUILD_DIR)/ec_probe.o $(BUILD_DIR)/nano_gpt_ec.o $(BUILD_DIR)/matmul_rsp2_ec.o $(BUILD_DIR)/rsp_mm2_ovl.o $(BUILD_DIR)/expert_cache.o
+
+legend_of_elya_ecprobe.z64: N64_ROM_TITLE="Elya EC"
+legend_of_elya_ecprobe.z64: $(BUILD_DIR)/legend_of_elya_ecprobe.dfs
+
 # --- XCHK ROM: CPU-vs-RSP cross-check on screen (xchk_probe.c) ---
 #
 #   make xchk        same ternary blob on both engines, verdict drawn on screen

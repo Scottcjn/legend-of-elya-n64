@@ -678,3 +678,46 @@ not a re-baselined number.
 **Not yet done:** still ares, not silicon. The chunk sweep is CP0-only. The
 in-game (`-DRATE_INGAME`, RDP drawing between tokens) figure has not been
 re-measured with the overlap on, and that is the one a player feels.
+
+## F-R027: **the expert DMA hides — 92% of the stall disappears under a token**
+F-R025 found `src/expert_cache.c` (async PI DMA, LRU, speculative prefetch,
+written 2026-08-04, two green host suites) linked into no ROM. It could not
+usefully be linked, for a reason worth saying plainly: **the shipped model is a
+DENSE 6.36M-param ternary transformer, not a mixture of experts. There are no
+experts to stream.** `make ecprobe` (`ec_probe.c`) therefore does not pretend to
+be MoE. It measures the one physical fact that decides whether MoE is worth
+training for this machine: can an expert-sized cartridge DMA complete for free
+while the CPU and RSP are generating a token?
+
+Real cartridge addresses (`dfs_rom_addr("/sophia_weights.bin")` = `0xb0025aa0`),
+real PI DMA, real bytes, 160KB slices (STREAMING_MOE.md's own FFN-expert
+sizing), 2 slots, 4 experts cycled, over the SAME 16 generated tokens of the
+SAME real model, RSP + F-R026 overlap on. ares 147,
+`probe/ec_probe_2026-08-28.log`:
+```
+arm     what it does                                CP0 (16 tok)   vbl    vs BASE
+BASE    generation only, no cache traffic           216,228,276    276      --
+BLOCK   ec_acquire() BEFORE the token (stalls)      239,916,757    306    +11.0%
+HIDE    ec_request() before, ec_acquire() after     218,037,921    278     +0.84%
+```
+`base==block: same`, `base==hide: same` — all three arms emit the identical 16
+tokens (`: Sophia Elya of`), so the cache traffic does not touch the model and
+the measurement is not an artefact of a changed workload.
+
+**The number that matters: stalling costs 23,688,481 cycles for 16 transfers
+(1,480,530 each, ~15.8 ms, ~10 MB/s for 160KB — a physically sane PI rate);
+hiding costs 1,809,645 total. 92.4% of the transfer cost disappears.**
+
+Counter semantics, since `HIDE` reads `miss=0` and that looks wrong: only
+`ec_prefetch()` sets the `prefetched` flag, so an `ec_request()` whose DMA has
+completed by acquire-time is credited as an ordinary `hit`. `hits=15 pf=1` means
+the transfers really happened and had finished before the CPU asked. `BLOCK`'s
+`miss=16` is 16 genuine blocking transfers — that arm is what proves the bytes
+move at all.
+
+**What this licenses and what it does not.** It licenses training a real MoE for
+this machine: the streaming half of the design is now measured, not assumed, and
+F-R026's newly-idle CPU time is what pays for it. It does NOT show a speedup —
+there is no MoE model, so there is nothing yet to be faster than. And it is one
+DMA per token; an 8-expert-per-layer design would issue far more, which this
+probe does not test. Still ares, not silicon.

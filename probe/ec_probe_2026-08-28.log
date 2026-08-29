@@ -1,0 +1,10 @@
+Loaded ec
+Opening TCP-server on 127.0.0.1:9124
+Vulkan Enabled: using paraLLEl-RDP
+EC INIT rom=b0025aa0 slice=163840 slots=2 experts=4 ngen=16
+EC BASE  cp0=216228276 vbl=276 hits=0 miss=0 pf=0
+EC BLOCK cp0=239916757 vbl=306 hits=0 miss=16 pf=0
+EC HIDE  cp0=218037921 vbl=278 hits=15 miss=0 pf=1
+EC TOKENS base==block:same base==hide:same
+EC TEXT : Sophia Elya of
+EC_DONE
