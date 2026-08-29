@@ -603,3 +603,49 @@ oracle, no retrain.
 MoE and any format split stay blocked behind it, because both are gated on CPU
 work that today does not begin until the RSP has already finished. Not started;
 this finding is the review, not an implementation.
+
+## F-R026: **the epilogue now runs UNDER the RSP — 1.31x, bit-exact, no ucode change**
+F-R017 measured the CPU epilogue at 60% of the RSP arm and F-R025's panel
+concluded the fix is to overlap it, not shrink it. Implemented and measured.
+
+**Mechanism.** The ucode already takes the weight row base, the output base and
+the row count as parameters, so the matvec is issued as N commands over row
+slices (`RSP_MM_EPI_CHUNKS`, default 4, chunked on a `rows_flush` boundary),
+each with its own syncpoint and its own parameter block — a single shared block
+would be overwritten under the still-running chunk. `rsp_matmul_end()` then
+walks the chunks: wait for chunk k, apply its float16 block scales while the RSP
+executes chunk k+1. **`rsp_mm2.S` was not touched.** The per-row arithmetic in
+the epilogue is the same code, moved inside the chunk loop.
+
+**ares 147, `make base-rsp-ovl EXTRA="-DBOOT_PROBE -DPROBE_LONG
+-DRSP_PHASE_TIMING [-DRSP_MM_EPI_OVERLAP]"`,** prompt "Who are you?", 48
+generated tokens, shipped ternary blob. Logs: `probe/epi_overlap_{off,on}_2026-08-28.log`.
+```
+                     CP0 (48 gen)     stage       disp        epi      unaccounted (blocked wait)
+overlap OFF        1,033,875,389   28,985,220  16,008,025  549,659,867     439,222,277
+overlap ON           788,901,434   27,315,470  19,416,430  557,144,717     185,024,817
+                        -23.7%                                               -254,197,460
+```
+Read the table carefully: **`epi` did not shrink** (549.7M -> 557.1M, slightly
+up from the extra chunk bookkeeping) and `disp` did not shrink either. The
+entire win is the blocked-wait column collapsing by 254M cycles — the CPU is no
+longer sitting still while the vector unit works. That is the definition of the
+overlap, and it is why this was worth doing before any MoE or format split:
+both of those are gated on CPU time that, until now, did not exist.
+
+**Bit-exactness.** Both arms emit `: Sophia Elya of Elyan Labs.s.: Scott's
+workshop` and their `GAME TOKS` lines are md5-identical (f38fdadca1e2b310) — all
+48 token ids, byte for byte, against the arm that has the 176/176 oracle record.
+No new oracle, no retrain, no quality question.
+
+**Default build is untouched, proven at the instruction level:**
+`mips64-elf-objdump -d build/matmul_rsp2_ovl.o` before and after this patch is
+identical, 873/873 instructions, because every line is inside
+`#ifdef RSP_MM_EPI_OVERLAP`.
+
+**Not yet done:** this is CP0 on the headless probe. The tok/s figure quoted in
+the README (2.19) is a *vblank* measurement on the game path — it has NOT been
+re-measured with the overlap on, and nothing here should be converted into a
+tok/s number until it is (docs/N64_RATE_FINDINGS.md is the reason that rule
+exists). Chunk count is unswept: 4 was chosen, not optimised. Still ares, not
+silicon.

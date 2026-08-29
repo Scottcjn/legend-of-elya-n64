@@ -267,6 +267,29 @@ static int   mm_zero     = 0;     /* activation vector was all zeros       */
 static float mm_sx       = 0.0f;  /* activation quantization scale         */
 #ifdef RSP_MM_OVERLAY
 static rspq_syncpoint_t mm_sync;
+
+#ifdef RSP_MM_EPI_OVERLAP
+/* F-R026: the epilogue (one float multiply per 32-weight block) is 60% of the
+ * RSP arm and today it does not start until the ENTIRE matvec has finished.
+ * The ucode already takes the row base, the output base and the row count as
+ * parameters, so the matvec can be issued as N independent commands over row
+ * slices -- no ucode change -- each with its own syncpoint.  end() then walks
+ * the chunks: wait for chunk k, apply its block scales while the RSP is still
+ * working chunk k+1.  Wall time becomes stage + max(disp, epi) instead of
+ * stage + disp + epi.  The arithmetic per row is byte-for-byte the code that
+ * was there before, so the numpy oracle is unchanged. */
+#ifndef RSP_MM_EPI_CHUNKS
+#define RSP_MM_EPI_CHUNKS 4
+#endif
+/* One parameter block PER CHUNK: the RSP reads the block when it executes the
+ * command, not when the CPU writes it, so a single shared block would be
+ * overwritten under the still-running chunk. */
+static uint32_t mm_cparams[RSP_MM_EPI_CHUNKS][16] __attribute__((aligned(16)));
+static rspq_syncpoint_t mm_csync[RSP_MM_EPI_CHUNKS];
+static int      mm_crow0[RSP_MM_EPI_CHUNKS];   /* first row of chunk        */
+static int      mm_crows[RSP_MM_EPI_CHUNKS];   /* rows in chunk (0 = unused) */
+static int      mm_nchunk = 0;                 /* 0 = single-command path    */
+#endif
 #endif
 
 int rsp_matmul_pending(void) { return mm_pending; }
@@ -275,6 +298,10 @@ int rsp_matmul_done(void)
 {
     if (!mm_pending) return 1;
     if (mm_zero)     return 1;
+#ifdef RSP_MM_EPI_OVERLAP
+    if (mm_nchunk > 0)
+        return rspq_syncpoint_check(mm_csync[mm_nchunk - 1]) ? 1 : 0;
+#endif
 #ifdef RSP_MM_OVERLAY
     return rspq_syncpoint_check(mm_sync) ? 1 : 0;
 #else
@@ -449,6 +476,47 @@ int rsp_matmul_begin(const uint8_t *weights, const float *input,
     /* The RSP is running the rspq loop, so DMEM cannot be poked directly any
      * more.  The overlay pulls the parameter block in itself, and the
      * parameter block tells it where to find the activations. */
+#ifdef RSP_MM_EPI_OVERLAP
+    /* Chunked dispatch: N commands over row slices, one syncpoint each, so
+     * end() can apply block scales to finished rows while the RSP works the
+     * rest.  Each chunk is the SAME ucode command with a shifted weight base,
+     * output base and row count; per-row arithmetic is untouched. */
+    mm_nchunk = 0;
+    {
+        int want = RSP_MM_EPI_CHUNKS;
+        if (want > out_dim) want = out_dim;
+        /* Chunk on a rows_flush boundary so the ucode's DMEM output window
+         * still batches whole flushes; a ragged chunk would make it flush a
+         * partial window and change nothing but the DMA count. */
+        int per = ((out_dim / want) / rows_flush) * rows_flush;
+        if (per < rows_flush) per = rows_flush;
+        if (per >= out_dim) { want = 1; per = out_dim; }
+
+        int row = 0;
+        for (int c = 0; c < want && row < out_dim; c++) {
+            int rows = (c == want - 1) ? (out_dim - row) : per;
+            if (row + rows > out_dim) rows = out_dim - row;
+            for (int i = 0; i < 16; i++) mm_cparams[c][i] = rsp2_params[i];
+            mm_cparams[c][P_OUT_DIM / 4]  = (uint32_t)rows;
+            mm_cparams[c][P_W_BASE / 4]   = (uint32_t)(uintptr_t)weights
+                                          + (uint32_t)(row * row_bytes);
+            mm_cparams[c][P_OUT_BASE / 4] = (uint32_t)(uintptr_t)rsp2_rb
+                                          + (uint32_t)((size_t)row * out_row_b);
+            data_cache_hit_writeback_invalidate(mm_cparams[c],
+                                                sizeof(mm_cparams[c]));
+            rspq_write(mm_ovl_id, 0x0, 0, (uint32_t)(uintptr_t)mm_cparams[c]);
+            mm_csync[c] = rspq_syncpoint_new();
+            mm_crow0[c] = row; mm_crows[c] = rows;
+            row += rows; mm_nchunk = c + 1;
+        }
+        /* The last chunk's syncpoint is what done()/end() ultimately wait on;
+         * mm_sync is kept pointing at it so every existing caller of
+         * rspq_syncpoint_check(mm_sync) still means "the matvec is finished". */
+        mm_sync = mm_csync[mm_nchunk - 1];
+        if (!mm_noflush) rspq_flush();
+    }
+    goto dispatched;
+#endif
     rspq_write(mm_ovl_id, 0x0, 0, (uint32_t)(uintptr_t)rsp2_params);
     /* A syncpoint, not rspq_wait().  rspq_wait() additionally blocks until
      * the RDP has finished drawing, which is harmless in the headless probe
@@ -471,6 +539,9 @@ int rsp_matmul_begin(const uint8_t *weights, const float *input,
      * and would gain nothing by being kicked early.  Measured neutral; see
      * mm_noflush above for the three numbers. */
     if (!mm_noflush) rspq_flush();
+#ifdef RSP_MM_EPI_OVERLAP
+dispatched:;
+#endif
 #else
     rsp_load_data(rsp2_xi, (unsigned long)(in_dim * 2), DM_XI);
     rsp_load_data(rsp2_params, 64, 0);
@@ -500,6 +571,55 @@ void rsp_matmul_end(const uint16_t *scales, float *output,
     }
 
     CP0_RD(_c2);
+#if defined(RSP_MM_OVERLAY) && defined(RSP_MM_EPI_OVERLAP)
+    if (mm_nchunk > 0) {
+        /* F-R026: walk the chunks.  Wait for chunk k, then apply its block
+         * scales -- the RSP is meanwhile executing chunk k+1, so the CPU's
+         * epilogue and the RSP's matvec run at the same time.  The wait/epi
+         * counters keep their meaning: rsp_t_wait is time actually spent
+         * blocked, which is what should fall if the overlap is real. */
+        const int nblk = in_dim / SGAI_Q_BLOCK;
+        const float inv = 1.0f / (((bits == 8) ? K_INT8 : K_TERN) * mm_sx);
+        uint32_t wsum = 0, esum = 0, ta, tb, tc;
+        for (int c = 0; c < mm_nchunk; c++) {
+            CP0_RD(ta);
+            if (rspq_syncpoint_check(mm_csync[c])) rsp_n_free++;
+            else                                   rsp_n_blocked++;
+            rspq_syncpoint_wait(mm_csync[c]);
+            CP0_RD(tb);
+            wsum += tb - ta;
+
+            const int r0 = mm_crow0[c], nr = mm_crows[c];
+            data_cache_hit_writeback_invalidate(
+                rsp2_rb + (size_t)r0 * (out_row_b / 2),
+                (unsigned long)((size_t)nr * out_row_b));
+
+            for (int o = r0; o < r0 + nr; o++) {
+                const int16_t  *base = rsp2_rb + (size_t)o * nsb * 32;
+                const uint16_t *rs   = scales  + (size_t)o * nblk;
+                float acc = 0.0f;
+                for (int sb = 0; sb < nsb; sb++) {
+                    const int16_t *h0 = base + sb * 32;
+                    const int16_t *h1 = h0 + 16;
+                    for (int b = 0; b < 8; b++) {
+                        int32_t p0 = (int32_t)(((uint32_t)(uint16_t)h0[b] << 16)
+                                              | (uint32_t)(uint16_t)h0[8 + b]);
+                        int32_t p1 = (int32_t)(((uint32_t)(uint16_t)h1[b] << 16)
+                                              | (uint32_t)(uint16_t)h1[8 + b]);
+                        acc += ((float)p0 + (float)p1) * f16d(rs[sb * 8 + b]);
+                    }
+                }
+                output[o] = acc * inv;
+            }
+            CP0_RD(tc);
+            esum += tc - tb;
+        }
+        mm_nchunk = 0;
+        rsp_t_wait += wsum;
+        rsp_t_epi  += esum;
+        return;
+    }
+#endif
 #ifdef RSP_MM_OVERLAY
     if (rspq_syncpoint_check(mm_sync)) rsp_n_free++;
     else                               rsp_n_blocked++;
