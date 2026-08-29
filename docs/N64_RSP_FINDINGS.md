@@ -660,9 +660,21 @@ syncpoint. 16 is the knee and is the shipped default; 32 is 1.5% faster and
 pays double the dispatch for it, which is a bad trade the moment the game's
 RDP work competes for the same command queue. Not swept on silicon.
 
-**Not yet done:** this is CP0 on the headless probe. The tok/s figure quoted in
-the README (2.19) is a *vblank* measurement on the game path — it has NOT been
-re-measured with the overlap on, and nothing here should be converted into a
-tok/s number until it is (docs/N64_RATE_FINDINGS.md is the reason that rule
-exists). Chunk count is unswept: 4 was chosen, not optimised. Still ares, not
-silicon.
+**tok/s, measured properly (added same session).** The CP0 ratios above are NOT
+convertible to tok/s, so the repo's own rate harness was run instead:
+`make base-rsp-ovl SGAI_BITS=2 EXTRA="-DRATE_PROBE [-DRSP_MM_EPI_OVERLAP]"`,
+16 generated tokens, vblank clock, calibration arm A within 0.24% both runs
+(`probe/rate_epi_overlap_{off,on}_2026-08-28.log`):
+```
+                       CP0 (16 gen)   vblanks   tok/s (vbl)   25-tok prompt
+overlap OFF             344,066,493      439       2.184       639 vbl (10.7s)
+overlap ON              247,841,278      316       3.026       447 vbl ( 7.5s)
+                                                    +38.6%      -30%
+```
+Both arms emit `all me Sophia El`. The off arm re-measures within 0.4% of the
+README's standing 2.19 row, so this is the same machine and the same harness,
+not a re-baselined number.
+
+**Not yet done:** still ares, not silicon. The chunk sweep is CP0-only. The
+in-game (`-DRATE_INGAME`, RDP drawing between tokens) figure has not been
+re-measured with the overlap on, and that is the one a player feels.

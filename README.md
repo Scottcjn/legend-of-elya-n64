@@ -179,6 +179,7 @@ ares 147 headless. Both clocks quoted; both arms emit byte-identical text.
 |-------|-----------:|--------:|------------:|-------------------:|--------:|
 | scalar CPU (`make base`) | 609,379,304 | 778 | 1.230 | **1.23** | 0.81 |
 | RSP overlay (`make base-rsp-ovl`) | 342,795,521 | 438 | 2.187 | **2.19** | 0.46 |
+| RSP overlay + epilogue overlap (`-DRSP_MM_EPI_OVERLAP`) | 247,841,278 | 316 | 3.026 | **3.03** | 0.33 |
 
 Those are pure inference, headless. Driving the **real vsync-locked game loop**
 (`-DRATE_INGAME`, so the RDP renders a frame between tokens as it does for a
@@ -191,6 +192,14 @@ player) costs a little more, and this is what is actually on screen:
 
 Both builds emit the same 19 characters, `Call me Sophia Elya`, in every arm above —
 the instrumentation changed no token.
+
+The third row is F-R026 (`docs/N64_RSP_FINDINGS.md`): the CPU's float16
+block-scale epilogue now runs *underneath* the RSP matvec instead of after it,
+by issuing the matvec as row-slice commands with per-chunk syncpoints. Measured
+in the same probe, same session, same blob: the overlap-off arm re-measured at
+344,066,493 CP0 / 439 vblanks / 2.184 tok/s (within 0.4% of the 2.19 row above),
+so the pair is 2.184 -> 3.026 tok/s, **1.39x**, with byte-identical output. The
+25-token prompt ingestion drops with it, 639 -> 447 vblanks (10.7s -> 7.5s).
 
 **RSP overlay speedup over scalar: 1.78x** (1.776x on vblanks, 1.778x on CP0), with
 `rsp=1968 cpu=0` — every matmul really did go to the vector unit.
