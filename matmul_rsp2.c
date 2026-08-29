@@ -279,7 +279,7 @@ static rspq_syncpoint_t mm_sync;
  * stage + disp + epi.  The arithmetic per row is byte-for-byte the code that
  * was there before, so the numpy oracle is unchanged. */
 #ifndef RSP_MM_EPI_CHUNKS
-#define RSP_MM_EPI_CHUNKS 4
+#define RSP_MM_EPI_CHUNKS 16
 #endif
 /* One parameter block PER CHUNK: the RSP reads the block when it executes the
  * command, not when the CPU writes it, so a single shared block would be

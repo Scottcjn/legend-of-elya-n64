@@ -610,7 +610,7 @@ concluded the fix is to overlap it, not shrink it. Implemented and measured.
 
 **Mechanism.** The ucode already takes the weight row base, the output base and
 the row count as parameters, so the matvec is issued as N commands over row
-slices (`RSP_MM_EPI_CHUNKS`, default 4, chunked on a `rows_flush` boundary),
+slices (`RSP_MM_EPI_CHUNKS`, default 16, chunked on a `rows_flush` boundary),
 each with its own syncpoint and its own parameter block — a single shared block
 would be overwritten under the still-running chunk. `rsp_matmul_end()` then
 walks the chunks: wait for chunk k, apply its float16 block scales while the RSP
@@ -642,6 +642,23 @@ No new oracle, no retrain, no quality question.
 `mips64-elf-objdump -d build/matmul_rsp2_ovl.o` before and after this patch is
 identical, 873/873 instructions, because every line is inside
 `#ifdef RSP_MM_EPI_OVERLAP`.
+
+**Chunk-count sweep** (same probe, same blob; `GAME TOKS` md5 `f38fdadca1e2b310`
+at EVERY setting, so none of this trades exactness for speed):
+```
+chunks      CP0 (48 gen)   vs off    disp (CPU issuing commands)
+off        1,033,875,389    1.00x     16,008,025
+2            867,922,708    1.19x
+4            788,901,434    1.31x     19,416,430
+8            762,173,104    1.36x
+16           752,605,530    1.37x     24,021,978   <- default
+32           741,443,538    1.39x     33,690,747
+```
+Returns flatten after 8 while dispatch cost grows linearly (16.0M -> 33.7M
+cycles from off to 32), because each chunk is another rspq command plus another
+syncpoint. 16 is the knee and is the shipped default; 32 is 1.5% faster and
+pays double the dispatch for it, which is a bad trade the moment the game's
+RDP work competes for the same command queue. Not swept on silicon.
 
 **Not yet done:** this is CP0 on the headless probe. The tok/s figure quoted in
 the README (2.19) is a *vblank* measurement on the game path — it has NOT been
