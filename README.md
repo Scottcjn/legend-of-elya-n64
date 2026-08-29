@@ -336,6 +336,12 @@ afterwards. The integer block sums are exact, and the ROM's output is
 formats and two prompts, plus 1,296 exact block sums in a standalone kernel
 harness (F-R018, F-R023) — no token excused as quantization noise.
 
+`make xchk` builds a ROM that makes the console say this itself: the same
+blob loaded twice, one copy on the scalar engine and one on the RSP, the same
+prompts free-run greedily on both, every byte compared, and `XCHK PASS 16/16
+48/48` drawn on screen with each arm's CP0 count and the RSP dispatch counters
+(`xchk_probe.c`, F-R024). Needs the Expansion Pak.
+
 **Measured 1.78× over the scalar baseline** on the shipped ternary blob under
 ares (2.19 vs 1.23 tok/s). The "projected 4-8×" that stood here was never a
 tok/s measurement: the 4.79× it came from is a ratio of CP0 cycle counts on the

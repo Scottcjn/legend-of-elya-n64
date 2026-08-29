@@ -506,3 +506,52 @@ shape and the same sparsity class.
 
 **Final RSP exact-match tally: 176/176 tokens, two weight formats, three blobs,
 two prompts, plus 1,296 exact integer block sums in the unit harness.**
+
+## F-R024: **XCHK — CPU-vs-RSP agreement stated BY THE CONSOLE, on screen**
+Until now the kernel's exactness record (F-R018, F-R023: 176/176) lived in ares
+IS-Viewer logs compared by hand against the numpy oracle. `xchk_probe.c`
+(`make xchk`, ROM `legend_of_elya_xchk.z64`) loads the shipped ternary blob
+twice, drives one copy with the scalar engine and one with the RSP engine
+(`sgai_init_ex` with `SGAI_ENGINE_CPU` / `SGAI_ENGINE_RSP`; the RSP copy is
+permuted in place, which is why two copies are needed), free-runs the same
+prompts greedily on both, compares every byte, and draws the verdict on the
+screen so a photograph of a television is the evidence. ares 147 headless,
+2026-08-28, `filesystem/sophia_weights.bin` (2,031,628 B):
+```
+XCHK RDRAM 8192 KB  need 2x1984 KB weights
+XCHK CPU arm rdy=1 bits=2 L=8 | RSP rdy=1
+XCHK [0] "Elya" x16 tokens
+XCHK  CPU: n Labs built me
+XCHK  RSP: n Labs built me
+XCHK  cp0 cpu=544375063 rsp=297228714  x1.83
+XCHK  rsp calls: cpu-arm 0  rsp-arm 912
+XCHK  MATCH 16/16
+XCHK [1] "Who are you?" x48 tokens
+XCHK  CPU: : Sophia Elya of Elyan Labs.s.: Sc
+XCHK  RSP: : Sophia Elya of Elyan Labs.s.: Sc
+XCHK  cp0 cpu=1802717905 rsp=1026652131  x1.75
+XCHK  rsp calls: cpu-arm 0  rsp-arm 2832
+XCHK  MATCH 48/48
+XCHK max |logit gap| = 144330 e-6 (info)
+XCHK XCHK PASS - CPU and RSP agree, byte for byte
+```
+Full 48-token transcript, both arms: `: Sophia Elya of Elyan Labs.s.: Scott's
+workshop`. The routing counters are part of the verdict: the CPU arm made 0 RSP
+dispatches and the RSP arm made 912 = 8 layers x 6 tensors x 19 passes (and
+2,832 for 59 passes), so the two arms genuinely ran on different processors.
+
+**What is and is not claimed.** Tokens are the claim: 64/64 identical. The
+logits are NOT bit-identical floats (largest gap 0.144 across all 64 steps)
+and are not expected to be — the CPU sums `w*scale*x` per element in float32,
+the RSP sums exact integers and applies one float16 scale per block; different
+summation order, same argmax. That gap is printed as information, not gated.
+The speedups on screen (1.83x, 1.75x) are CP0 ratios of the two arms in the
+same boot, consistent with F-R017's 1.84x for the ternary blob; they are still
+ares figures until this ROM is booted from an EverDrive.
+
+The ares `[unusual] RSP DMA writing to RDRAM address ... which is cached`
+notice appears in this run exactly as it did in `rsp2_int8.log` (F-R008 era);
+it is a pre-existing property of the kernel's DMA-out, not of XCHK.
+
+**Needs the Expansion Pak** (4,386,136 B linked: two weight copies in .bss plus
+two KV caches on the heap). ROM is gitignored like every other `.z64`; build it.

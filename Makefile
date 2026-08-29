@@ -246,6 +246,22 @@ $(BUILD_DIR)/legend_of_elya_dual.elf: $(BUILD_DIR)/dual_probe.o $(BUILD_DIR)/nan
 legend_of_elya_dual.z64: N64_ROM_TITLE="Elya Dual"
 legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
 
+# --- XCHK ROM: CPU-vs-RSP cross-check on screen (xchk_probe.c) ---
+#
+#   make xchk        same ternary blob on both engines, verdict drawn on screen
+xchk: legend_of_elya_xchk.z64
+
+$(BUILD_DIR)/legend_of_elya_xchk.dfs: filesystem/sophia_weights.bin
+
+$(BUILD_DIR)/xchk_probe.o: xchk_probe.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -o $@ $<
+
+$(BUILD_DIR)/legend_of_elya_xchk.elf: $(BUILD_DIR)/xchk_probe.o $(BUILD_DIR)/nano_gpt_rsp_ovl.o $(BUILD_DIR)/matmul_rsp2_ovl.o $(BUILD_DIR)/rsp_mm2_ovl.o
+
+legend_of_elya_xchk.z64: N64_ROM_TITLE="Elya XCHK"
+legend_of_elya_xchk.z64: $(BUILD_DIR)/legend_of_elya_xchk.dfs
+
 # --- Mining ROM (CPU LLM + Pico bridge + RTC mining) ---
 mining: legend_of_elya_mining.z64
 
