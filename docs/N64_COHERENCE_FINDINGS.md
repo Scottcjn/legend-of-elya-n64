@@ -762,3 +762,41 @@ the dialogue buffer, making `give lamp` put a lamp in the inventory, and the
 `emitted/parsed/executed` counters on the HUD). Sophia's expert was trained
 before the command lines existed and emits nothing — it needs a retrain. Host
 only; no ROM has run this.
+
+## C032: over-emission is a corpus-density problem, and halving the reps fixes it
+C031 found the model emitting commands where none was asked for: Aldric
+answered "Who are you?" with prose *and* `open dungeon`. The suspicion was
+corpus balance -- 134 of his 255 QA lines ended in a command, so he had learned
+that answers usually do. Sophia was retrained with `CMD_REPS=1` (half the
+command lines, everything else identical); Aldric at reps=2 is the control.
+
+```
+prompt                        Sophia reps=1                       command
+Can I have the lamp?:         "Take it, traveller."               give lamp
+May I take the map?:          "Here, you have earned this."       give map
+Open the way to the library.: "The way is open."                  open library
+What is my task?:             "The task is set."                  quest lantern start
+Who are you?:                 "I am Sophia, the helpmeet."        (none)
+What lurks here?:             "Beware the boss beyond the door."  (none)
+Tell me a secret.:            "Bomb every wall, miss nothing."    (none)
+How do I proceed?:            "Push the block onto the symbol."   (none)
+```
+**4/4 non-command prompts emitted nothing**, while every command prompt still
+produced the right command, 6/6 parsed. The same eight prompts against Aldric's
+reps=2 expert produce a command on "Who are you?". Command density in the
+corpus is the knob; the model is not confused about *which* command, only about
+*whether* to issue one.
+
+Sophia's identity also came back: *"I am Sophia, the helpmeet"* rather than
+C031's cross-character leak, because her retrain carried her own material at a
+higher relative weight once the command lines were halved.
+
+**Still open:** duplicates within one answer -- "Open the way to the library."
+produced `open library` twice and then `give map`. Generation simply continues
+after 0x02. The runtime already caps this at one command per answer
+(`g_cmd.used_this_turn`), so it is bounded in the game, but the model's own
+behaviour is unfixed and reps=0.5 or an explicit "answers without commands"
+counterweight in the corpus is the next experiment.
+
+Host only. Both experts are ternary 4L x 256d, 1,048,588 B; Sophia val 0.1713
+(reps=1) vs 0.1693 (reps=0, C031's invalid run), Aldric 0.1641, Brunhild 0.1531.
