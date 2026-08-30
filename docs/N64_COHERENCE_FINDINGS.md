@@ -716,3 +716,49 @@ sampler change. The answers are short because the training answers are short.
 **Side effect worth having:** answers average ~28 tokens instead of always
 spending the cap, so a turn costs ~4.7 s rather than 8.1 s at 5.9 tok/s. The
 model stopping when it is finished is also the cheaper option.
+
+## C031: **a 3.2M-parameter model emits well-formed tool calls — 8/8 parsed**
+The tool-calling design named its own likeliest failure: "that the model can
+*learn* to emit 0x01 at the right moment at 3.2M params — untested, and the
+likeliest failure of the lane." It is now tested, on the host, running the
+ROM's own `nano_gpt.c` with `SGAI_CMD_BAND` and the generated trie wired to
+`sgai_cmd_allowed`/`sgai_cmd_mask`/`sgai_cmd_byte` exactly as the game will
+(`tools/cmd_host_test.c`).
+
+Aldric's per-NPC expert (4 layers x 256d ternary, 1,048,588 B, val 0.1641,
+trained on his own material plus ~134 command lines generated from
+`training/world_defs.py`):
+```
+Can I have the book?:        "Carry it well."        -> give book
+May I take the key?:         "It is yours."          -> give key
+I need the key.:             "Take it, traveller."   -> give key
+Open the way to the forge.:  "The way is open."      -> open forge
+What is my task?:            "Seek it and return."   -> quest ledger done
+commands emitted=8 parsed=8
+```
+**Every command emitted was accepted by the trie.** The dialogue and the
+command are one byte stream: prose in the display band, the command wrapped in
+0x01/0x02 which the band already discards.
+
+**Two real problems, recorded rather than glossed:**
+1. **Over-emission.** `Who are you?: "I am Sophia Elya, always."` also produced
+   `open dungeon` — a command on a prompt that asked for none. The harness sets
+   `cmd_allowed()` to 1 unconditionally; the game must gate it (no command
+   while no NPC is in reach, at most one per turn), but the model is also
+   simply too eager, and that is a corpus-balance question: ~134 of Aldric's
+   255 QA lines carry a command, so he has learned that answers usually end in
+   one. Halving the command reps is the obvious first experiment.
+2. **Duplicates.** `give key` twice in one answer: generation continues after
+   0x02 and immediately opens another command. One command per turn is the
+   right runtime policy regardless of what the model wants.
+
+**Also visible:** Aldric answers "Who are you?" as *"I am Sophia Elya"* — the
+per-NPC experts share the `identity` shard, so he has learned her lines. Either
+the shard split needs per-character identity material, or the persona prefix
+has to carry more weight.
+
+**Not yet done:** the game side (routing command bytes to a parser instead of
+the dialogue buffer, making `give lamp` put a lamp in the inventory, and the
+`emitted/parsed/executed` counters on the HUD). Sophia's expert was trained
+before the command lines existed and emits nothing — it needs a retrain. Host
+only; no ROM has run this.
