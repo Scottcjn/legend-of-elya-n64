@@ -791,6 +791,23 @@ Sophia's identity also came back: *"I am Sophia, the helpmeet"* rather than
 C031's cross-character leak, because her retrain carried her own material at a
 higher relative weight once the command lines were halved.
 
+**CORRECTION (same day, from the very next retrain): this result did not
+reproduce, and the conclusion above is WITHDRAWN.** Sophia was retrained with
+`CMD_REPS=1` again, identical seed and settings, with two corpus lines changed
+(removing the word "helpmeet" at Scott's request -- 2 lines of 291). That run
+emits commands on non-command prompts again: `Who are you?` produced
+`open library` AND `give map`, `Tell me a secret.` produced `open forge`, and
+one command failed the trie mid-way (emitted=7, parsed=6 -- the fail-closed
+path doing its job).
+
+So the 4/4-clean run was **run-to-run variance, not an effect of command
+density**. A single-run A/B against a different NPC's expert was never enough
+to establish it, and this file said so as if it were. What actually bounds
+over-emission is the RUNTIME gate -- one command per answer, and only while an
+NPC is in reach -- which is in the game and does not depend on the model
+behaving. The corpus-density hypothesis is untested, not disproven; testing it
+properly needs several seeds per arm on the same corpus, which has not been run.
+
 **Still open:** duplicates within one answer -- "Open the way to the library."
 produced `open library` twice and then `give map`. Generation simply continues
 after 0x02. The runtime already caps this at one command per answer
