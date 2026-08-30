@@ -390,10 +390,14 @@ def build_v7_corpus(seed: int, shard: str = None):
         # makes it fluent only in its own answers.  See moe_shards.py for why
         # the match is substring-only.
         import moe_shards
-        parts = moe_shards.split_lists(lists)
-        if shard not in parts:
-            raise SystemExit("unknown shard %r; have %s" % (shard, list(parts)))
-        lists = parts[shard]
+        if shard.startswith("npc:"):
+            # Per-NPC expert: shared prose plus the topics that character knows.
+            lists = moe_shards.npc_lists(lists, shard[4:])
+        else:
+            parts = moe_shards.split_lists(lists)
+            if shard not in parts:
+                raise SystemExit("unknown shard %r; have %s" % (shard, list(parts)))
+            lists = parts[shard]
         print("[shard %s] %d IDENTITY + %d QA + %d prose lines"
               % (shard, len(lists["IDENTITY_PAIRS"]), len(lists["QA_PAIRS"]),
                  len(lists["CORPUS_LINES"])), flush=True)

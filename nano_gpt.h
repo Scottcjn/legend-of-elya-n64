@@ -259,6 +259,12 @@ extern int sgai_dual_serial;
  * NULL by default. */
 extern void (*sgai_tick)(void);
 
+/* In-band NPC commands (cmd_trie.h). All NULL/0 by default. */
+extern int  (*sgai_cmd_allowed)(void);
+extern int  (*sgai_cmd_mask)(uint8_t *mask);
+extern void (*sgai_cmd_byte)(uint8_t b);
+extern int  sgai_cmd_active;
+
 void sgai_reset(SGAIState *state);
 uint8_t sgai_next_token(SGAIState *state, uint8_t input_token, uint32_t temperature_q8);
 void sgai_generate(SGAIState *state, const uint8_t *prompt, int prompt_len,

@@ -47,6 +47,26 @@
  * NULL by default, so host builds and probes are unaffected. */
 void (*sgai_tick)(void) = 0;
 
+/* ─── In-band command emission (see cmd_trie.h) ──────────────────────────────
+ * An NPC should be able to DO things, not only say them. A command rides in
+ * the same byte stream as the dialogue, wrapped in 0x01/0x02 -- control bytes
+ * the display band (ASCII 32..126) already discards, so they are invisible to
+ * the textbox by construction, exactly as the newline end-of-answer was.
+ *
+ * Two hooks, both NULL by default so nothing changes unless a caller opts in:
+ *   sgai_cmd_allowed()  may a command START here? (the game says no while it
+ *                       has no NPC in reach, so 0x01 cannot be drawn at all)
+ *   sgai_cmd_mask()     once inside a command, which bytes are legal NEXT --
+ *                       filled from the generated trie, so a malformed command
+ *                       or one this NPC may not issue is UNREACHABLE rather
+ *                       than rejected afterwards. For prose a mask would be
+ *                       faking coherence (C027); for command syntax the mask
+ *                       IS the parser. */
+int  (*sgai_cmd_allowed)(void) = 0;
+int  (*sgai_cmd_mask)(uint8_t *mask) = 0;   /* returns count of legal bytes */
+void (*sgai_cmd_byte)(uint8_t b) = 0;       /* every byte inside a command */
+int  sgai_cmd_active = 0;                   /* 1 while between 0x01 and 0x02 */
+
 /* Byte-swap helpers for LE weight file on BE N64 */
 static inline uint16_t swap16(uint16_t x) { return (x >> 8) | (x << 8); }
 static inline uint32_t swap32(uint32_t x) {
@@ -879,9 +899,37 @@ static uint8_t sample_logits(const float *logits, uint32_t temperature_q8,
         /* Greedy: pure argmax over printable ASCII 32-126.
          * No repetition penalty — matches the proven x86 reference.
          * The model naturally produces varied text without needing it. */
+#ifdef SGAI_CMD_BAND
+        if (sgai_cmd_active && sgai_cmd_mask) {
+            /* Inside a command the candidate set is not the ASCII band, it is
+             * the trie's legal-next-byte set. Nothing else can be drawn. */
+            static uint8_t cmask[SGAI_VOCAB];
+            for (int i = 0; i < SGAI_VOCAB; i++) cmask[i] = 0;
+            if (sgai_cmd_mask(cmask) > 0) {
+                int b = -1;
+                for (int i = 0; i < SGAI_VOCAB; i++)
+                    if (cmask[i] && (b < 0 || logits[i] > logits[b])) b = i;
+                if (b >= 0) {
+                    if (sgai_cmd_byte) sgai_cmd_byte((uint8_t)b);
+                    return (uint8_t)b;
+                }
+            }
+            sgai_cmd_active = 0;      /* nothing legal: abandon, fail closed */
+        }
+#endif
         int best = 32;
         for (int i = 33; i <= 126; i++)
             if (logits[i] > logits[best]) best = i;
+#ifdef SGAI_CMD_BAND
+        /* Let the command-start byte compete, but only where the game says a
+         * command is currently meaningful. */
+        if (sgai_cmd_allowed && sgai_cmd_allowed()
+            && logits[1] > logits[best]) {
+            sgai_cmd_active = 1;
+            if (sgai_cmd_byte) sgai_cmd_byte(1);
+            return 1;
+        }
+#endif
 #ifdef SGAI_NEWLINE_STOP
         /* C028 experiment: the trainer joins every corpus line with '\n', so
          * the model was taught to predict newline as end-of-answer; the

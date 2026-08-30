@@ -76,3 +76,39 @@ if __name__ == "__main__":
         tot += q
         print(f"{n:10s} {q:4d} QA lines  (+{len(d['CORPUS_LINES'])} shared prose)")
     print(f"{'total':10s} {tot:4d} of {len(L['IDENTITY_PAIRS'])+len(L['QA_PAIRS'])}")
+
+
+# ── Per-NPC experts ─────────────────────────────────────────────────────────
+# One expert per CHARACTER, not per topic. Each NPC's corpus is the shared
+# prose (which teaches English rather than facts) plus the topic shards that
+# character actually knows about, so an expert is never starved down to one
+# NPC's handful of QA lines -- which is the failure the design panel warned
+# about and the reason each entry below lists more than one topic.
+NPC_EXPERTS = [
+    ("sophia",   ["identity", "dungeon"]),          # the guide: herself, and the realm
+    ("aldric",   ["lore", "identity"]),             # the keeper: Zelda/Nintendo lore
+    ("brunhild", ["hardware", "rustchain"]),        # the smith: silicon and the chain
+]
+
+def npc_lists(lists: dict, npc: str) -> dict:
+    """The corpus for ONE named NPC: shared prose + their topics' QA lines."""
+    topics = dict(NPC_EXPERTS).get(npc)
+    if topics is None:
+        raise SystemExit("unknown npc %r; have %s"
+                         % (npc, [n for n, _ in NPC_EXPERTS]))
+    parts = split_lists(lists)
+    out = {"IDENTITY_PAIRS": [], "QA_PAIRS": [],
+           "CORPUS_LINES": list(lists["CORPUS_LINES"])}
+    for t in topics:
+        out["IDENTITY_PAIRS"] += parts[t]["IDENTITY_PAIRS"]
+        out["QA_PAIRS"]       += parts[t]["QA_PAIRS"]
+    # Teach this NPC the commands the world actually grants them. Generated
+    # from training/world_defs.py, the same file tools/gen_cmd_trie.py builds
+    # the ROM's decoder from, so the model is never taught a command the trie
+    # forbids -- and never learns one another NPC owns.
+    try:
+        import gen_cmd_corpus
+        out["QA_PAIRS"] += gen_cmd_corpus.lines_for(npc, reps=2)
+    except Exception as e:
+        print("  (no command lines: %s)" % e)
+    return out
