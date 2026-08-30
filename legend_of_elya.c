@@ -22,6 +22,9 @@
 #include "src/expert_cache.h"
 #include "moe_router.h"
 #endif
+#ifdef SGAI_CMD_BAND
+#include "cmd_trie.h"
+#endif
 
 #ifdef USE_RPC_LLM
 #include "n64_llm_rpc.h"
@@ -661,13 +664,17 @@ static uint16_t  moe_resident = 0xFFFF;   /* expert currently in G.ai */
 
 /* Which expert each NPC thinks with.  Sophia is the guide (identity), Aldric
  * keeps the archive (lore), Brunhild works the forge (hardware). */
+/* PER-NPC BANK: the expert index IS the NPC index. Each character has their
+ * own expert (training/moe_shards.py NPC_EXPERTS), trained on the shared prose
+ * plus the topics that character knows, plus the commands the world grants
+ * them. That is a different arrangement from the TOPIC bank moe_router.h
+ * describes, so this build must be fed banks/npc_bank.bin --
+ * training/make_moe_bank.py warns loudly if a topic bank is used instead. */
 static uint16_t npc_expert(int npc)
 {
-    switch (npc) {
-    case 0:  return MOE_E_IDENTITY;
-    case 1:  return MOE_E_LORE;
-    default: return MOE_E_HARDWARE;
-    }
+    if (npc < 0) npc = 0;
+    if (npc >= NPC_COUNT) npc = NPC_COUNT - 1;
+    return (uint16_t)npc;
 }
 
 /* Called every frame from the dungeon state: ask for the expert of whoever we
@@ -698,6 +705,110 @@ static int moe_select(int npc)
     return 1;
 }
 #endif /* USE_MOE */
+
+#ifdef SGAI_CMD_BAND
+/* ─── NPC commands ───────────────────────────────────────────────────────────
+ * The model emits a command in band with its dialogue, wrapped in 0x01/0x02.
+ * C031 measured Aldric's expert producing 8 commands and the trie accepting
+ * all 8 -- and also producing them where none was asked for, so the runtime
+ * gates what the corpus over-taught:
+ *   - a command may only START while an NPC is in reach
+ *   - at most ONE per answer (the model happily emits two)
+ * Bytes inside a command never reach the dialogue buffer, so nothing leaks
+ * into the textbox even if the model misbehaves. */
+static struct {
+    int      node;          /* position in the generated trie   */
+    int      active;        /* between 0x01 and 0x02            */
+    int      used_this_turn;
+    char     buf[48];
+    int      len;
+    uint32_t emitted, parsed, executed, rejected;
+    char     last[48];      /* for the HUD                      */
+} g_cmd;
+
+/* Inventory and world state the commands actually change. */
+static struct { uint8_t item[8]; uint8_t opened[ROOM_COUNT]; uint8_t quest[4]; } g_world;
+
+/* The room words the grammar uses, in RoomID order. These MUST match
+ * training/world_defs.py ROOMS -- the trie is generated from that file. */
+static const char *const ROOM_KEY[ROOM_COUNT] = { "dungeon", "library", "forge" };
+
+static const char *const CMD_ITEMS[] = { "lamp", "key", "map", "gem", "book", 0 };
+
+static int cmd_item_index(const char *name)
+{
+    for (int i = 0; CMD_ITEMS[i]; i++)
+        if (!strcmp(CMD_ITEMS[i], name)) return i;
+    return -1;
+}
+
+/* Re-validate independently of the trie. If the decoder is right this can
+ * never fire -- so a nonzero `rejected` is not a handled error, it is the
+ * alarm that the trie and the world have desynced. */
+static int cmd_execute(const char *cmd)
+{
+    char verb[12], a1[20], a2[12];
+    int n = sscanf(cmd, "%11s %19s %11s", verb, a1, a2);
+    if (n < 2) return 0;
+    if (!strcmp(verb, "give") || !strcmp(verb, "recall")) {
+        int it = cmd_item_index(a1);
+        if (it < 0) return 0;
+        g_world.item[it] = 1;
+        return 1;
+    }
+    if (!strcmp(verb, "open")) {
+        for (int r = 0; r < ROOM_COUNT; r++)
+            if (!strcmp(ROOM_KEY[r], a1)) { g_world.opened[r] = 1; return 1; }
+        return 0;
+    }
+    if (!strcmp(verb, "quest") && n == 3) {
+        static const char *const Q[] = { "lantern", "ledger", "relic", 0 };
+        for (int q = 0; Q[q]; q++)
+            if (!strcmp(Q[q], a1)) {
+                g_world.quest[q] = !strcmp(a2, "done") ? 2 : 1;
+                return 1;
+            }
+        return 0;
+    }
+    return 0;
+}
+
+static int  game_cmd_allowed(void)
+{
+    /* Only while someone is in front of us, and only once per answer. */
+    return G.near_npc >= 0 && !g_cmd.used_this_turn;
+}
+static int  game_cmd_mask(uint8_t *mask)
+{
+    int npc = G.current_npc >= 0 ? G.current_npc : 0;
+    if (npc >= CMD_NPCS) npc = CMD_NPCS - 1;
+    return cmd_legal(g_cmd.node, npc, mask);
+}
+static void game_cmd_byte(uint8_t b)
+{
+    if (b == CMD_START) {
+        g_cmd.active = 1; g_cmd.node = 0; g_cmd.len = 0; g_cmd.emitted++;
+        return;
+    }
+    if (!g_cmd.active) return;
+    if (b == CMD_END) {
+        g_cmd.buf[g_cmd.len] = 0;
+        g_cmd.active = 0; sgai_cmd_active = 0;
+        g_cmd.used_this_turn = 1;
+        g_cmd.parsed++;
+        { size_t n_ = strlen(g_cmd.buf);
+          if (n_ > sizeof g_cmd.last - 1) n_ = sizeof g_cmd.last - 1;
+          memcpy(g_cmd.last, g_cmd.buf, n_); g_cmd.last[n_] = 0; }
+        if (cmd_execute(g_cmd.buf)) g_cmd.executed++;
+        else                        g_cmd.rejected++;
+        return;
+    }
+    int nx = cmd_advance(g_cmd.node, b);
+    if (nx < 0) { g_cmd.active = 0; sgai_cmd_active = 0; g_cmd.rejected++; return; }
+    g_cmd.node = nx;
+    if (g_cmd.len < (int)sizeof g_cmd.buf - 1) g_cmd.buf[g_cmd.len++] = (char)b;
+}
+#endif /* SGAI_CMD_BAND */
 
 // ─── The player ──────────────────────────────────────────────────────────────
 //
@@ -1452,6 +1563,17 @@ static void draw_text(surface_t *disp) {
             graphics_draw_text(disp, 10, 220, "[A]Talk  [B]Type (START sends)");
         else
             graphics_draw_text(disp, 10, 220, "[D-pad]Walk  [B]Type  edges=doors");
+#ifdef SGAI_CMD_BAND
+        {   /* emitted > 0 with executed == 0 is the shape of every silent bug
+             * this repo has hit, so show all four together, not just success. */
+            char cb[48];
+            sprintf(cb, "cmd e%u p%u x%u r%u", (unsigned)g_cmd.emitted,
+                    (unsigned)g_cmd.parsed, (unsigned)g_cmd.executed,
+                    (unsigned)g_cmd.rejected);
+            graphics_draw_text(disp, 10, 208, cb);
+            if (g_cmd.last[0]) graphics_draw_text(disp, 168, 208, g_cmd.last);
+        }
+#endif
         break;
 
     case STATE_DIALOG_SELECT: {
@@ -1816,6 +1938,12 @@ static void update_generating_step(void) {
         G.gen_last_tok = tok;
         G.gen_out_count++;
 
+#ifdef SGAI_CMD_BAND
+        /* Command bytes never reach the textbox: 0x01/0x02 and everything
+         * between them go to the parser. The display band already excludes
+         * them, but say so explicitly so a misbehaving model cannot leak. */
+        if (tok == CMD_START || tok == CMD_END || sgai_cmd_active) tok = 0;
+#endif
         // Newline = end of Q&A response (training separator); treat like EOS
         if (tok == '\n') tok = 0;
         // Period = end of first sentence — stop here for a clean response.
@@ -1971,6 +2099,12 @@ static void open_dialog_select(void) {
  * npc_idx: which NPC is speaking (for persona prefix + canned fallback).
  * prompt: the chosen prompt string (from NPC_DIALOG_OPTIONS or keyboard). */
 static void start_dialog_from_prompt(int npc_idx, const char *prompt, int use_persona) {
+#ifdef SGAI_CMD_BAND
+    /* One command per answer. C031 measured the model emitting two. */
+    g_cmd.used_this_turn = 0;
+    g_cmd.active = 0; g_cmd.node = 0; g_cmd.len = 0;
+    sgai_cmd_active = 0;
+#endif
     G.state       = STATE_GENERATING;
     G.dialog_char = 0;
     G.dialog_done = 0;
@@ -2205,7 +2339,9 @@ static void game_init(void) {
         }
         uint8_t *slots[MOE_SLOTS];
         for (int i = 0; i < MOE_SLOTS; i++) slots[i] = moe_mem[i];
-        if (rom && h.magic == MOE_MAGIC && h.n == MOE_N_EXPERTS
+        /* A per-NPC bank must hold at least one expert per NPC; fewer would
+         * silently route two characters to the same brain. */
+        if (rom && h.magic == MOE_MAGIC && h.n >= NPC_COUNT
             && h.len <= MOE_EXPERT_BYTES
             && ec_init(&moe_ec, rom + h.base, h.len, (uint16_t)h.n,
                        slots, MOE_SLOTS) == 0) {
@@ -2622,6 +2758,11 @@ int main(void) {
      * back on for the experiment. */
 #ifdef AUDIO_TICK_IN_INFERENCE
     sgai_tick = audio_service;
+#endif
+#ifdef SGAI_CMD_BAND
+    sgai_cmd_allowed = game_cmd_allowed;
+    sgai_cmd_mask    = game_cmd_mask;
+    sgai_cmd_byte    = game_cmd_byte;
 #endif
 
     game_init();

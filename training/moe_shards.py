@@ -108,7 +108,14 @@ def npc_lists(lists: dict, npc: str) -> dict:
     # forbids -- and never learns one another NPC owns.
     try:
         import gen_cmd_corpus
-        out["QA_PAIRS"] += gen_cmd_corpus.lines_for(npc, reps=2)
+        # CMD_REPS: C031 measured over-emission -- 134 of Aldric's 255 QA lines
+        # carried a command, so he learned that answers usually end in one and
+        # emitted 'open dungeon' after "Who are you?". Halving is the first
+        # experiment; Aldric at reps=2 is the control.
+        import os as _os
+        _reps = int(_os.environ.get("CMD_REPS", "2"))
+        if _reps:
+            out["QA_PAIRS"] += gen_cmd_corpus.lines_for(npc, reps=_reps)
     except Exception as e:
         print("  (no command lines: %s)" % e)
     return out

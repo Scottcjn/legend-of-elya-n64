@@ -252,15 +252,15 @@ legend_of_elya_dual.z64: $(BUILD_DIR)/legend_of_elya_dual.dfs
 #                     prefetched as the player walks toward them
 moegame: legend_of_elya_moe.z64
 
-$(BUILD_DIR)/legend_of_elya_moe.dfs: $(MOE_BANK) filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64
+$(BUILD_DIR)/legend_of_elya_moe.dfs: $(NPC_BANK) filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64
 	@rm -rf $(BUILD_DIR)/moegamefs && mkdir -p $(BUILD_DIR)/moegamefs
-	cp $(MOE_BANK) $(BUILD_DIR)/moegamefs/sophia_moe.bin
+	cp $(NPC_BANK) $(BUILD_DIR)/moegamefs/sophia_moe.bin
 	cp filesystem/dungeon.wav64 filesystem/library.wav64 filesystem/forge.wav64 $(BUILD_DIR)/moegamefs/
 	$(N64_MKDFS) $@ $(BUILD_DIR)/moegamefs/
 
 $(BUILD_DIR)/legend_of_elya_moe.o: legend_of_elya.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -DRSP_MM_EPI_OVERLAP -DUSE_MOE -o $@ $<
+	$(CC) -c $(CFLAGS) -DUSE_RSP_MATMUL -DRSP_MM_EPI_OVERLAP -DUSE_MOE -DSGAI_CMD_BAND -o $@ $<
 
 $(BUILD_DIR)/legend_of_elya_moe.elf: $(BUILD_DIR)/legend_of_elya_moe.o $(BUILD_DIR)/nano_gpt_ec.o $(BUILD_DIR)/matmul_rsp2_ec.o $(BUILD_DIR)/rsp_mm2_ovl.o $(BUILD_DIR)/expert_cache.o
 
@@ -335,6 +335,8 @@ moeprobe: legend_of_elya_moeprobe.z64
 # filesystem_moe/ silently doubled the ROM to 10 MB and shipped a second,
 # unused 5 MB copy of the weights.
 MOE_BANK ?= banks/sophia_moe_sep.bin
+# The GAME uses the per-NPC bank: one expert per character, indexed by NPC.
+NPC_BANK ?= banks/npc_bank.bin
 $(BUILD_DIR)/legend_of_elya_moeprobe.dfs: $(MOE_BANK)
 	@rm -rf $(BUILD_DIR)/moefs && mkdir -p $(BUILD_DIR)/moefs
 	cp $(MOE_BANK) $(BUILD_DIR)/moefs/sophia_moe.bin
